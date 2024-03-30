@@ -1,0 +1,700 @@
+git submodule update --init
+
+xilinx
+hw/timer/xilinx_timer.c
+timer_hit
+
+
+xilinx_axidma_stream_class_init
+
+
+icount
+
+args, 
+qemu-options.hx
+
+
+fdt_init_qdev
+static Property rp_properties[] = {
+    DEFINE_PROP_CHR("chardev", RemotePort, chr),
+    DEFINE_PROP_STRING("chardesc", RemotePort, chardesc),
+    DEFINE_PROP_STRING("chrdev-id", RemotePort, chrdev_id),
+    DEFINE_PROP_BOOL("sync", RemotePort, do_sync, false),
+    DEFINE_PROP_UINT64("sync-quantum", RemotePort, peer.local_cfg.quantum,
+                       1000000),
+    DEFINE_PROP_END_OF_LIST(),
+};
+
+
+hw/core/remote-port.c
+rp_init
+do_sync
+
+
+
+shmget
+
+
+shmat
+do_shmat
+
+IPCOP_shmget
+
+
+qemu-img.c -> main
+
+
+
+
+
+
+默认情况下，RTC 由主机系统时间驱动。 这允许使用 RTC 作为来宾内部的准确参考时钟，特别是如果主机时间平稳地遵循准确的外部参考时钟，例如 通过 NTP。 如果您想将访客时间与主机隔离，可以将“clock”设置为“rt”，如果主机支持，它会提供主机单调时钟。 为了防止 RTC 在暂停期间继续运行，您可以将“clock”设置为“vm”（虚拟时钟）。 '\ ``clock=vm``\ ' 特别是在 icount 模式下推荐使用，以保持确定性； 但是，请注意，在 icount 模式下，虚拟时钟的速度是可变的，并且通常可能与主机时钟不同。 如果您遇到时间漂移问题，特别是使用 Windows 的 ACPI HAL，请启用“driftfix”（仅限 i386 目标）。 此选项将尝试找出 Windows 客户机未处理的计时器中断数量，并将重新注入它们
+
+启用虚拟指令计数器。 虚拟CPU每2^N ns的虚拟时间就会执行一条指令。 如果指定“auto”，则虚拟 CPU 速度将自动调整，以将虚拟时间保持在实时时间的几秒之内。 请注意，虽然此选项可以提供确定性行为，但它不提供周期精确的仿真。 现代 CPU 包含具有复杂缓存层次结构的超标量无序核心。 执行的指令数量通常与实际性能几乎没有相关性或没有相关性。 当虚拟CPU处于睡眠状态时，虚拟时间将以默认速度提前，除非指定“sleep=on”。 使用“sleep=on”，每当虚拟CPU进入睡眠模式时，虚拟时间将立即跳转到下一个计时器截止时间，并且如果没有启用计时器，则不会提前。 从来宾的角度来看，此行为提供了确定的执行时间。 如果启用 icount，则默认值为“sleep=off”。 ``sleep=on`` 不能与 ``shift=auto`` 或 ``align=on`` 一起使用。 “align=on”将激活延迟算法，该算法将尝试同步主机时钟和虚拟时钟。 目标是让访客按照轮班选项所施加的实际频率运行。 每当访客时钟落后于主机时钟并且指定“align=on”时，我们就会向用户打印一条消息以告知延迟情况。 目前，当“shift”为“auto”时，此选项不起作用。 注意：同步算法将适用于客户时钟领先于主机时钟的那些移位值。 通常，当移位值较高时会发生这种情况（多高取决于主机）。 如果启用 icount，则默认值为“align=off”。 当指定“rr”选项时，将启用确定性记录/重放。 还必须提供 rrfile= 选项来指定重播日志的路径。 在记录模式下，数据被写入该文件，而在重放模式下，数据被读回。 如果给出了“rrsnapshot”选项，则它指定虚拟机快照名称。 在记录模式下，会在执行记录开始时创建具有给定名称的新 VM 快照。 在重放模式下，此选项指定用于加载初始 VM 状态的快照名称
+
+
+
+hw/pci-bridge/pcie_root_port.c
+
+socket:
+type_init(rp_register_types)
+    rp_realize
+        rp_restart_sync_timer_bare
+            ptimer_set_limit(s->sync.ptimer, s->sync.quantum, 1)
+        rp_autocreate_chardev
+            rp_autocreate_chardesc
+                asprintf(&chardesc, "unix:%s/qemu-rport-%s%s", -> /opt/pkg/projects/zedboard/zedboard_petalinux_project/qemu_cosim/qemu-rport-_cosim@0
+
+
+
+启动命令参考:
+$ petalinux-boot --qemu --kernel --qemu-args "-redir tcp:1534::1534 -hw-dtb ./qemu_cosim/qemu_hw_system.dtb -machine-path ./qemu_cosim -icount 1 -sync-quantum 10000"
+
+
+
+rp_memory_master_realize
+    s->peer = rp_get_peer(s->rp)
+    void *g_malloc(size_t size)
+    s->mmaps = g_new0(typeof(*s->mmaps), s->map_num)
+    memory_region_init_io(&s->mmaps[i].iomem, OBJECT(dev), s->rp_ops,
+    sysbus_init_mmio(SYS_BUS_DEVICE(dev), &s->mmaps[i].iomem);
+
+
+
+static const MemoryRegionOps rp_ops = {
+    .access = rp_io_access,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+};
+rp_io_access
+    rp_mm_access -> rp_mm_access_with_def_attr
+        rp_busaccess_tx_dataptr
+        memcpy(data, tr->data.p8, tr->size)
+        trace_remote_port_memory_master_tx_busaccess
+        rp_write(rp, (void *) &pay, len)
+            qemu_chr_fe_write_all -> 从前端向字符后端写入数据。 该函数会将数据从前端发送到后端。 与@qemu_chr_fe_write不同，如果后端无法消耗所有尝试写入的数据，则该函数将阻塞。 该函数是线程安全的。 返回：消耗的字节数（如果没有关联的 Chardev，则为 0
+                qemu_chr_write -> https://martins3.github.io/qemu/char.html
+        rp_dev_wait_resp
+        rp_get_busaccess_response
+        trace_remote_port_memory_master_rx_busaccess
+        rp_resp_slot_done
+        rp_process -> 远程端口：内存主控：事务后排空处理队列，事务后排空处理队列。 对于强排序或不允许提前确认的交易，我们需要排空待处理的 RP 处理队列。 这是因为 RP 与正常请求并行处理响应，因此它们可能会被重新排序。 例如，在读取清除中断的读取清除寄存器时，此问题变得明显。 即使中断线的降低在读响应之前到达我们，我们也可以在线更新之前处理响应，从而导致虚假中断。 这有一些优化的空间，但现在我们使用大锤子并排空整个队列
+        rp_restart_sync_timer
+            ptimer_transaction_begin
+            rp_restart_sync_timer_bare
+                ptimer_stop -> qemu时间虚拟化: https://www.cnblogs.com/LoyenWang/p/14091708.html
+                ptimer_set_limit
+                ptimer_run
+            ptimer_transaction_commit
+
+
+
+include/hw/ptimer.h
+ptimer API 实现了一个简单的周期性倒计时器。 倒计时器有一个值（可以通过 ptimer_get_count() 和 ptimer_set_count() 读取和写入）。 当使用 ptimer_run() 启用时，该值将以使用 ptimer_set_period() 或 ptimer_set_freq() 配置的频率向下计数。 当它达到零时，它将触发回调函数，并且可以设置为从指定的限制值重新加载自身并继续倒计时，或者停止（作为一次性计时器）。 基于事务的 API 用于修改 ptimer 状态：对修改 ptimer 状态的函数的所有调用必须位于对 ptimer_transaction_begin() 和 ptimer_transaction_commit() 的匹配调用之间。 当 ptimer_transaction_commit() 被调用时，它将在事务中的所有更改之后评估计时器的状态，并在必要时调用回调。 （有关状态修改函数的完整列表和回调的详细语义，请参阅 ptimer_init() 文档。）忘记设置周期/频率（或将其设置为零）是 QEMU 设备中的一个错误，会导致警告消息 当访客尝试启用计时器时打印到 stderr。 */ “旧版”ptimer 策略保留了与引入策略标志之前的传统 ptimer 行为的向后兼容性。 它有一些奇怪的行为，与典型的硬件定时器行为不匹配。 对于使用 ptimers 的新设备，不应使用 PTIMER_POLICY_LEGACY，而应检查所需的实际行为并指定正确的策略标志集来实现该行为。 如果您正在检修使用 PTIMER_POLICY_LEGACY 的现有设备，并且能够检查或测试真实的硬件行为，请考虑更新它以指定正确的策略标志。 默认策略的粗糙边缘： - 以 period = 0 开始运行会发出错误消息并在没有触发器的情况下停止计时器。 - 将正在运行的计时器的周期设置为 0 会发出错误消息并在没有触发器的情况下停止计时器。 - 在计数器 = 0 的情况下开始运行或在定时器运行时将其设置为“0”会导致触发并用极限值重新加载计数器。 如果 limit = 0，ptimer 会发出错误消息并停止计时器。 - 正在运行的定时器的计数器值比实际值小1。 - 更改正在运行的计时器的周期/频率会丢失自上一个周期以来经过的时间，从而有效地重新启动计时器，计数器 = 更改时的计数器值（即减一）。 */
+
+
+
+slave:
+static const TypeInfo rp_info = {
+    .name          = TYPE_REMOTE_PORT_MEMORY_SLAVE,
+    .parent        = TYPE_DEVICE,
+    .instance_size = sizeof(RemotePortMemorySlave),
+    .instance_init = rp_memory_slave_init,
+    .class_init    = rp_memory_slave_class_init,
+    .interfaces    = (InterfaceInfo[]) {
+        { TYPE_REMOTE_PORT_DEVICE },
+        { },
+    },
+};
+
+rp_memory_slave_realize
+    rp_get_peer
+
+
+
+ivshmem_client_search_peer -> contrib：添加 ivshmem 客户端和服务器，当使用 ivshmem 设备时，访客之间的通知可以使用 ivshmem 服务器作为中断发送（文档中描述的典型用法）。 客户端作为调试工具提供。 签署人：Olivier Matz <olivier.matz@6wind.com> 签署人：David Marchand <david.marchand@6wind.com> [修复 valgrind 警告、选项和 server_close() segvs、额外的服务器标头 包括、getopt() 返回类型、树外构建、使用 qemu event_notifier 而不是 eventfd、修复 x86/osx 警告 - Marc-André]
+
+shm support: https://github.com/ssbandjl/qemu_xilinx/commit/a75eb03b9fca3af291ec2c433ddda06121ae927d
+
+
+ivshmem_common_realize
+
+ivshmem-server.c
+
+enum ivshmem_registers
+
+test:
+tests/qtest/ivshmem-test.c
+
+
+ivshmem_read
+
+ivshmem_io_write
+
+typedef struct IVShmemState
+struct IVShmemState {
+
+void ivshmem_plain_class_init
+
+static const MemoryRegionOps ivshmem_mmio_ops = {
+    .read = ivshmem_io_read,
+    .write = ivshmem_io_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .impl = {
+        .min_access_size = 4,
+        .max_access_size = 4,
+    },
+};
+
+
+system_ss.add(when: 'CONFIG_EDU', if_true: files('myedu.c'))
+
+依赖包: 
+build
+make 
+
+sudo ln -s /usr/bin/python3 /usr/bin/python
+apt-get install ninja-build
+ninja --version
+apt-get install libglib2.0-dev
+apt-get install meson
+apt-get install libpixman-1-dev
+apt install flex
+
+sudo apt-get install libsdl2-dev
+
+git clone https://gitlab.com/qemu-project/berkeley-testfloat-3
+cd berkeley-testfloat-3
+git checkout 40619cbb3bf32872df8c53cc457039229428a263
+git remote set-url origin http://gitlab.nsv6.b122.top/bin/berkeley-testfloat-3
+git push origin master
+
+
+查看内存: virsh dominfo centos7 |grep mem
+编辑内存: virsh shutdown centos7; virsh edit centos7; virsh start centos7
+
+QEMU 模拟的 NVMe 设备被开发人员和用户用于开发、测试和验证设备驱动程序和工具。 仿真设备正在快速开发中，QEMU 6.0 更新了设备以支持许多核心附加功能，例如更新到 NVMe v1.4、通用解除分配和未写入逻辑块错误支持、增强的 PMR 和 CMB 支持 作为许多实验性功能，例如分区命名空间、多路径 I/O、命名空间共享和 DIF/DIX 端到端数据保护。 添加这些功能后，用户可以测试各种配置，开发人员可以测试设备驱动程序代码路径，而这些路径通常不容易在通用硬件上运行。 在本次演讲中，我们介绍了这些功能的实现以及如何使用它们来改进工具和设备驱动程序。
+了解 QEMU NVMe 仿真的可用功能
+了解如何为这些功能配置 QEMU
+探索上述功能的实现
+了解如何利用仿真设备测试工具和设备驱动程序
+
+qemu仿真nvme_ssd设备, https://qemu-project.gitlab.io/qemu/system/devices/nvme.html
+Open-Channel SSD 2.0, OCSSD, https://www.cnblogs.com/yi-mu-xi/p/10898150.html
+开放通道固态驱动器是一种固态驱动器，它没有在设备上实现固件闪存转换层，而是将物理固态存储的管理留给计算机的操作系统。
+
+它允许您从虚拟化元素创建虚拟计算机（也称为虚拟机），并且每个虚拟机（也称为来宾）独立于主机系统运行。
+KVM 是基于内核的虚拟机的缩写，是一种集成到 Linux 内核中的开源 1 型管理程序（裸机管理程序）。 它允许您创建和管理运行 Windows、Linux 或 UNIX 变体（例如 FreeBSD 和 OpenBSD）的虚拟机
+
+QEMU（Quick Emulator）是一个模拟计算机硬件各种组件的软件模块。 它支持完全虚拟化并与 KVM 一起工作以提供整体虚拟化体验。
+在本指南中，我们将演示如何在 Ubuntu 20.04 / 22.04 发行版上安装 QEMU/KVM, https://www.tecmint.com/install-qemu-kvm-ubuntu-create-virtual-machines/
+
+
+书籍推荐: QEMU/KVM源码解析与应用 - 李强
+
+
+
+win启动: 
+C:\Programmi\qemu\qemu-system-x86_64 -m 3072 -cpu Haswell,vendor=GenuineIntel,+invtsc,vmware-cpuid-freq=on -machine pc-q35-2.9 -smp 4,cores=2 -usb -device usb-kbd -device usb-tablet -smbios type=2 -device ich9-intel-hda -device hda-duplex **-accel hax** -device ide-drive,bus=ide.1,drive=DebHDD -drive id=DebHDD,if=none,file= **WHAT SHOULD I PUT HERE ?**,format=qcow2 -device ide-drive,bus=ide.0,drive=DebDVD
+
+create img: 
+ssh root@<IP> "dd if=/dev/sda bs=100M status=progress | xz -T 8 -1" | unxz | cp --sparse=always /proc/self/fd/0 ae.img
+
+
+start up args
+-m 4G \
+  -machine type=q35,accel=kvm \
+  -smp 4 \
+  -drive format=raw,file=ae.img \
+  -cpu host \
+  -display default \
+  -vga virtio \
+  -show-cursor
+
+-bios /usr/share/ovmf/OVMF.fd
+
+install script:
+#!/bin/bash
+qemu-system-x86_64 -M pc -enable-kvm -cpu host -m 4096 -hda /home/dell/big/ubuntu-20.04.5-desktop-amd64_2.iso
+
+创建qcow2, 用于安装Ubuntu系统
+#!/bin/bash
+qemu-img create -f qcow2 hda.qcow2 32G
+
+
+安装启动脚本:
+#!/bin/bash
+qemu-system-x86_64 -M pc -enable-kvm -cpu host -m 4096 \
+-device virtio-net-pci,netdev=net0,romfile=”” \
+-netdev type=user,id=net0 \
+-device virtio-blk-pci,drive=drv0 \
+-drive format=qcow2,file=ubuntu-20.04.5.qcow2,if=none,id=drv0 \
+-object rng-random,filename=/dev/urandom,id=rng0 \
+-device virtio-rng-pci,rng=rng0 \
+-device virtio-scsi \
+-device scsi-cd,drive=cd \
+-device edu \
+-drive if=none,id=cd,file=/home/dell/big/ubuntu-20.04.5-desktop-amd64_2.iso
+
+新版本: 
+qemu-system-x86_64 -smp 2 -m 2048 -enable-kvm -device e1000,netdev=user0 -netdev user,id=user0 linux.increase.qcow2
+
+dpu:
+/home/dell/project/dpu/qemu/build/qemu-system-x86_64 -M pc -enable-kvm -cpu host -m 4096 -device virtio-blk-pci,drive=drv0 -drive format=qcow2,file=ubuntu-20.04.5.qcow2,if=none,id=drv0 -object rng-random,filename=/dev/urandom,id=rng0 -device virtio-rng-pci,rng=rng0 -device virtio-scsi -device scsi-cd,drive=cd -device edu -drive if=none,id=cd,file=/home/dell/big/ubuntu-20.04.5-desktop-amd64_2.iso
+
+
+去掉镜像后重启:
+#!/bin/bash
+qemu-system-x86_64 -M pc — enable-kvm -cpu host -m 4096 \
+-device virtio-net-pci,netdev=net0,romfile=”” \
+-netdev type=user,id=net0 \
+-device virtio-blk-pci,drive=drv0 \
+-drive format=qcow2,file=hda.qcow2,if=none,id=drv0 \
+-object rng-random,filename=/dev/urandom,id=rng0 \
+-device virtio-rng-pci,rng=rng0 \
+
+or:
+qemu-system-x86_64 -enable-kvm -m 8G -smp 4 -boot once=d -drive file=./Ubuntu20.img -cdrom ../iso_images/ubuntu-20.04.5-desktop-amd64.iso -device ac97
+
+
+qcow2是qemu-img创建的，是一个磁盘, 通过qemu启动参数将ubuntu iso文件安装到qcow2文件中
+
+
+
+查询qemu支持的虚拟网卡类型: /home/dell/project/dpu/qemu/build/qemu-system-x86_64 -net nic,model=?
+
+
+
+当下载的镜像为iso文件时，我们可以通过iso制作自己的镜像文件，整个过程类似给自己的电脑安装ubutnu系统
+1.首先在ubuntu官网下载ubuntu-20.04.4-desktop-amd64.iso文件
+2.制作一个空的虚拟硬盘，这里我给分配了80G的磁盘空间，创建完成后，我们就拥有了一个80G的空的硬盘
+qemu-img create -f qcow2 my_disk.img 80G
+1. 安装ubuntu20.04图形界面系统
+qemu-system-x86_64 -m 2048 -smp 2 --enable-kvm my_disk.img -cdrom ubuntu-20.04.4-desktop-amd64.iso
+2. 然后就和安装ubuntu系统一样，等待安装完成后，启动引导程序、内核和根文件系统以及其它的文件都会被制作到my_disk.img硬盘中，之后就可以用硬盘启动了。
+3. 从制作好的硬盘启动ubuntu
+qemu-system-x86_64 -m 2048 -smp 2 --enable-kvm my_disk.img
+
+qemu-systemxxx -m 2048 -smp 2 --enable-kvm ubuntu-20.04.5-desktop.qcow2 -cdrom /home/dell/big/ubuntu-20.04.5-desktop-amd64_2.iso
+
+
+ref cmd:
+-device virtio-scsi -device scsi-cd,drive=cd -device edu -drive if=none,id=cd,file=/home/dell/big/ubuntu-20.04.5-desktop-amd64_2.iso -vnc 0.0.0.0
+  301  /home/dell/project/dpu/qemu/build/qemu-system-x86_64 -M pc -enable-kvm -cpu host -m 4096 -device virtio-blk-pci,drive=drv0 -drive format=qcow2,file=ubuntu-20.04.5.qcow2,if=none,id=drv0 -object rng-random,filename=/dev/urandom,id=rng0 -device virtio-rng-pci,rng=rng0 -device virtio-scsi -device scsi-cd,drive=cd -device edu -drive if=none,id=cd,file=/home/dell/big/ubuntu-20.04.5-desktop-amd64_2.iso -vnc 0.0.0.0:s00
+  302  /home/dell/project/dpu/qemu/build/qemu-system-x86_64 -M pc -enable-kvm -cpu host -m 4096 -device virtio-blk-pci,drive=drv0 -drive format=qcow2,file=ubuntu-20.04.5.qcow2,if=none,id=drv0 -object rng-random,filename=/dev/urandom,id=rng0 -device virtio-rng-pci,rng=rng0 -device virtio-scsi -device scsi-cd,drive=cd -device edu -drive if=none,id=cd,file=/home/dell/big/ubuntu-20.04.5-desktop-amd64_2.iso -vnc 0.0.0.0:1
+  303  /home/dell/project/dpu/qemu/build/qemu-system-x86_64 -M pc -enable-kvm -cpu host -m 4096 -device virtio-blk-pci,drive=drv0 -drive format=qcow2,file=ubuntu-20.04.5.qcow2,if=none,id=drv0 -object rng-random,filename=/dev/urandom,id=rng0 -device virtio-rng-pci,rng=rng0 -device virtio-scsi -device scsi-cd,drive=cd -device edu -drive if=none,id=cd,file=/home/dell/big/ubuntu-20.04.5-desktop-amd64_2.iso -vnc 0.0.0.0:5900
+  304  /home/dell/project/dpu/qemu/build/qemu-system-x86_64 -M pc -enable-kvm -cpu host -m 4096 -device virtio-blk-pci,drive=drv0 -drive format=qcow2,file=ubuntu-20.04.5.qcow2,if=none,id=drv0 -object rng-random,filename=/dev/urandom,id=rng0 -device virtio-rng-pci,rng=rng0 -device virtio-scsi -device scsi-cd,drive=cd -device edu -drive if=none,id=cd,file=/home/dell/big/ubuntu-20.04.5-desktop-amd64_2.iso -vnc 0.0.0.0:0
+  305  /home/dell/project/dpu/qemu/build/qemu-system-x86_64 -M pc -enable-kvm -cpu host -m 4096 -device virtio-blk-pci,drive=drv0 -drive format=qcow2,file=ubuntu-20.04.5.qcow2,if=none,id=drv0 -object rng-random,filename=/dev/urandom,id=rng0 -device virtio-rng-pci,rng=rng0 -device virtio-scsi -device scsi-cd,drive=cd -device edu -drive if=none,id=cd,file=/home/dell/big/ubuntu-20.04.5-desktop-amd64_2.iso
+
+  317  /home/dell/project/dpu/qemu/build/qemu-img create -f qcow2 ubuntu-20.04.5-desktop.qcow2 16G
+
+  319  /home/dell/project/dpu/qemu/build/qemu-system-x86_64 -m 2048 -smp 2 --enable-kvm ubuntu-20.04.5-desktop.qcow2 -cdrom /home/dell/big/ubuntu-20.04.5-desktop-amd64_2.iso
+  332  /home/dell/project/dpu/qemu/build/qemu-system-x86_64 -m 2048 -smp 2 --enable-kvm ubuntu-20.04.5-desktop.qcow2 -cdrom /home/dell/big/ubuntu-20.04.5-desktop-amd64_2.iso
+  333  /home/dell/project/dpu/qemu/build/qemu-system-x86_64 -m 2048 -smp 2 -vnc :5959 --enable-kvm ubuntu-20.04.5-desktop.qcow2 -cdrom /home/dell/big/ubuntu-20.04.5-desktop-amd64_2.iso
+  334  /home/dell/project/dpu/qemu/build/qemu-system-x86_64 -m 2048 -smp 2 -vnc :1 --enable-kvm ubuntu-20.04.5-desktop.qcow2 -cdrom /home/dell/big/ubuntu-20.04.5-desktop-amd64_2.iso
+  335  qemu-system-x86_64 -m 2048 -smp 2 --enable-kvm ubuntu-20.04.5-desktop.qcow2 -cdrom /home/dell/big/ubuntu-20.04.5-desktop-amd64_2.iso
+  336  qemu-system-x86_64 -m 4096 --enable-kvm ubuntu-20.04.5-desktop.qcow2 -cdrom /home/dell/big/ubuntu-20.04.5-desktop-amd64_2.iso
+  337  qemu-system-x86_64 -m 4096 --enable-kvm ubuntu-20.04.5-desktop.qcow2 -cdrom /home/dell/big/ubuntu-20.04.5-desktop-amd64_2.iso --nographic
+  345  cd qemu/
+  356  cd qemu/
+  358  qemu-system-x86_64 -m 4096 --enable-kvm ubuntu-20.04.5-desktop.qcow2 -cdrom /home/dell/big/ubuntu-20.04.5-desktop-amd64_2.iso
+  359  qemu-system-x86_64 -m 4096 --enable-kvm ubuntu-20.04.5-desktop.qcow2 -cdrom /home/dell/big/ubuntu-20.04.5-desktop-amd64_2.iso --nographic
+  360  cd big/qemu/
+  362  qemu-system-x86_64 -m 4096 --enable-kvm ubuntu-20.04.5-desktop.qcow2 -cdrom /home/dell/big/ubuntu-20.04.5-desktop-amd64_2.iso --nographic
+  365  qemu-system-x86_64 -m 4096 --enable-kvm ubuntu-20.04.5-desktop.qcow2 -cdrom /home/dell/big/ubuntu-20.04.5-desktop-amd64_2.iso --nographic
+  370  history|grep qemu
+
+sudo /home/dell/project/dpu/qemu/build/qemu-system-x86_64 -device edu -m 4096 -smp 2 --enable-kvm /home/dell/big/qemu/ubuntu-20.04.5-desktop.qcow2
+
+
+
+编译参数:
+scripts\ci\org.centos\stream\8\x86_64\configure
+
+安装依赖包参考:
+tests/docker/dockerfiles/ubuntu2004.docker
+
+或参考:
+sudo apt-get install -y git python3 python3-pip build-essential ninja-build pkg-config  libglib2.0-dev  libpixman-1-dev libslirp-dev
+
+下载源码:
+git clone https://github.com/qemu/qemu
+git checkout v8.0.0
+git submodule update --init --recursive
+
+查看编译帮助:
+./configure --help
+
+常用参数:
+qemu 常用参数
+-M: 指定设备类型
+-m: 指定内存大小; 如：-m 512M
+-kernel: 指定内核文件; 如：-kernel linux-5.10.181/arch/riscv/boot/Image
+-bios: 指定bios文件
+-smp: 指定虚拟机核心数
+-S: 冻结 CPU 直到远程 GDB 输入相应命令
+-s: 启动 GDB 服务，在 1234 端口接受gdb调试; 如：-s -S 或 -gdb tcp::1234 -S 选项用于启动 gdb 服务，启动后 qemu 不立即运行 guest，而是等待主机 gdb 发起连接，此时使用 gdb 输入 target remote:1234 可以进行相关调试，与真机调试无异。
+-initrd：指定启动文件
+-dtb: 指定dtb文件
+-nographic: 指定不需要图形界面
+-append：指定扩展显示界面，串口或者LCD，"console=ttyS0"和-nographic配合后，使得启动后的串口重定向到宿主机终端，能在宿主机的终端看到调试信息。如： -append "root=/dev/vda rw console=ttyS0"
+-device：常用于指定guest上总线挂载的外部设备，例如virtio-mmio、usb、pci等总线
+-netdev：配置网络设备
+
+start vm:
+/home/dell/project/dpu/qemu/build/qemu-system-x86_64 -machine virt,iommu=smmuv3 -device edu -device dma_engine -m 4096 -smp 2 -trace "smmuv3_*" --enable-kvm /home/dell/big/qemu/ubuntu-20.04.5-desktop.qcow2
+
+
+通过lspci查看edu设备的配置空间
+./lspci -s 00:02.0 -vvvv -xxxx
+
+查看edu BAR0寄存器内容
+devmem 0x10000000
+
+
+edu设备流程:
+constructor
+  type_init
+    type_register_static
+main
+
+
+qemu args:
+softmmu/vl.c
+
+qemu简介, 参数, 文档: https://www.qemu.org/docs/master/system/introduction.html
+docs/system/introduction.rst
+
+
+编译选项:
+scripts/meson-buildoptions.sh
+
+memory_region_init_io
+
+
+
+给pcie设备增加BAR: pci_register_bar
+增加功能: pcie_xxxxx_cap_init, qemu里对PCI和PCIe设备是分开模拟的，如果你要加PCIe设备相关的capability，需要 创建一个PCIe设备，这个需要interfaces定义成 INTERFACE_PCIE_DEVICE，以及为这个设备加上PCIe extend capability，使用pcie_endpoint_cap_init就可以了
+realize函数中使用pci_config_set_interrupt_pin给设备加一个INTx中断。使用msi_init
+给设备加MSI中断。可以使用pci_irq_assert触发一个电平中断，通过msi_notify触发一个
+MSI中断，通过qemu_irq_pulse触发一个边沿中断
+
+dma内核驱动: https://github.com/wangzhou/linux/commit/87695695e4d3ea72e60d9c5da5fc5804ae71fb48#diff-23db6e8ebed7cccdfafe5b13586b965a2852b526bf9b4b62d156eb2163de5f40
+
+
+
+start option, 启动选项:
+qemu-options.hx
+
+get debug help:
+/home/xb/project/virt/qemu/build/qemu-system-x86_64 -d help
+
+
+gdb:
+gdb --args /home/xb/project/virt/qemu/build/qemu-system-x86_64 -m 4G -smp 2 -enable-kvm  -display none -D /home/xb/big/qemu_vm.log -net nic,model=virtio,macaddr=52:54:00:00:00:01 -net bridge,br=br0 -device edu -device dma_engine -virtfs local,path=/home/xb/Public,mount_tag=host_public,id=host0,security_model=mapped-xattr /home/xb/big/qemu/ubuntu-20.04.5-desktop.qcow2
+
+gdb attach `ps aug|grep qemu|grep -v grep |awk '{print$2}'`\
+handle SIGUSR1 noprint nostop
+set print pretty on
+set max-value-size bytes 1048576
+
+
+qemu flow:
+softmmu/main.c -> main
+qemu_init(argc, argv);
+qemu_main_loop
+
+#0  dma_engine_register_types () at ../hw/misc/dma_engine.c:332
+#1  0x0000555555db7882 in module_call_init (type=type@entry=MODULE_INIT_QOM) at ../util/module.c:109
+#2  0x0000555555a6cbd0 in qemu_init_subsystems () at ../softmmu/runstate.c:767
+#3  0x0000555555a70255 in qemu_init (argc=21, argv=0x7fffffffe2b8) at ../softmmu/vl.c:2714
+#4  0x000055555586316d in main (argc=<optimized out>, argv=<optimized out>) at ../softmmu/main.c:47
+
+
+echo 128 > copy_size
+Thread 4 "qemu-system-x86" hit Breakpoint 3, dma_engine_io_write (opaque=0x55555787c6f0, offset=4096, value=119148800, size=4) at ../hw/misc/dma_engine.c:174
+--Type <RET> for more, q to quit, c to continue without paging--
+174     {
+(gdb) bt
+#0  dma_engine_io_write (opaque=0x55555787c6f0, offset=4096, value=119148800, size=4) at ../hw/misc/dma_engine.c:174
+#1  0x0000555555be60a3 in memory_region_write_accessor
+    (mr=mr@entry=0x55555787c6f0, addr=4096, value=value@entry=0x7ffff4847648, size=size@entry=4, shift=<optimized out>, mask=mask@entry=4294967295, attrs=...) at ../softmmu/memory.c:493
+#2  0x0000555555be598e in access_with_adjusted_size
+    (addr=addr@entry=4096, value=value@entry=0x7ffff4847648, size=size@entry=4, access_size_min=<optimized out>, access_size_max=<optimized out>, access_fn=
+    0x555555be6020 <memory_region_write_accessor>, mr=0x55555787c6f0, attrs=...) at ../softmmu/memory.c:569
+#3  0x0000555555be5cac in memory_region_dispatch_write (mr=mr@entry=0x55555787c6f0, addr=4096, data=<optimized out>, op=<optimized out>, attrs=attrs@entry=...) at ../softmmu/memory.c:1533
+#4  0x0000555555bef63e in flatview_write_continue
+    (fv=fv@entry=0x7ffee0004b80, addr=addr@entry=4273278976, attrs=..., ptr=ptr@entry=0x7ffff7fc6028, len=len@entry=8, addr1=<optimized out>, l=<optimized out>, mr=0x55555787c6f0)
+    at /home/xb/project/virt/qemu/include/qemu/host-utils.h:219
+#5  0x0000555555bef7aa in flatview_write (fv=0x7ffee0004b80, addr=addr@entry=4273278976, attrs=attrs@entry=..., buf=buf@entry=0x7ffff7fc6028, len=len@entry=8) at ../softmmu/physmem.c:2695
+#6  0x0000555555bf0108 in address_space_write (as=0x5555566c2360 <address_space_memory>, addr=4273278976, attrs=..., buf=buf@entry=0x7ffff7fc6028, len=8) at ../softmmu/physmem.c:2791
+#7  0x0000555555bf017e in address_space_rw (as=<optimized out>, addr=<optimized out>, attrs=..., attrs@entry=..., buf=buf@entry=0x7ffff7fc6028, len=<optimized out>, is_write=<optimized out>)
+   oftmmu/physmem.c:2801
+#8  0x0000555555c3c328 in kvm_cpu_exec (cpu=cpu@entry=0x555556a06c60) at ../accel/kvm/kvm-all.c:3039
+#9  0x0000555555c3d585 in kvm_vcpu_thread_fn (arg=arg@entry=0x555556a06c60) at ../accel/kvm/kvm-accel-ops.c:51
+#10 0x0000555555db4f93 in qemu_thread_start (args=<optimized out>) at ../util/qemu-thread-posix.c:541
+#11 0x00007ffff76e3609 in start_thread (arg=<optimized out>) at pthread_create.c:477
+#12 0x00007ffff7608353 in clone () at ../sysdeps/unix/sysv/linux/x86_64/clone.S:95
+
+size == 4 -> dma_engine_io_write32(opaque, offset, value)
+
+
+myedu
+hw/misc/myedu.c
+pci_edu_realize
+qemu_thread_create server_dma_thread -> 开启DMA服务线程
+
+
+config_write:
+edu_cfg_write
+    pci_get_bdf
+    client_cfg_read_msg2
+    client_cfg_write_msg1
+    pci_default_write_config
+
+
+lspci -> read stack -> edu_cfg_read
+    pci_get_bdf
+    pci_default_read_config
+(gdb) bt
+#0  edu_cfg_read (pci_dev=0x7f2bb4a4f010, address=0, len=4) at ../hw/misc/myedu.c:1558
+#1  0x000055a6cc5fdb9d in pci_host_config_read_common (pci_dev=0x7f2bb4a4f010, addr=addr@entry=0, limit=<optimized out>, limit@entry=256, len=len@entry=4)
+    at ../hw/pci/pci_host.c:107
+#2  0x000055a6cc5fdefe in pci_data_read (s=<optimized out>, addr=2147493888, len=4) at ../hw/pci/pci_host.c:143
+#3  0x000055a6cc5fe013 in pci_host_data_read (opaque=<optimized out>, addr=<optimized out>, len=<optimized out>) at ../hw/pci/pci_host.c:188
+#4  0x000055a6cc830611 in memory_region_read_accessor
+    (mr=mr@entry=0x55a6ce496740, addr=0, value=value@entry=0x7f2bb5e986f0, size=size@entry=4, shift=0, mask=mask@entry=4294967295, attrs=...) at ../softmmu/memory.c:441
+#5  0x000055a6cc83098e in access_with_adjusted_size
+    (addr=addr@entry=0, value=value@entry=0x7f2bb5e986f0, size=size@entry=4, access_size_min=<optimized out>, access_size_max=<optimized out>, access_fn=
+    0x55a6cc8305d0 <memory_region_read_accessor>, mr=0x55a6ce496740, attrs=...) at ../softmmu/memory.c:569
+#6  0x000055a6cc830b61 in memory_region_dispatch_read1 (attrs=..., size=4, pval=0x7f2bb5e986f0, addr=<optimized out>, mr=<optimized out>) at ../softmmu/memory.c:1443
+#7  memory_region_dispatch_read (mr=mr@entry=0x55a6ce496740, addr=<optimized out>, pval=pval@entry=0x7f2bb5e986f0, op=MO_32, attrs=attrs@entry=...) at ../softmmu/memory.c:1476
+#8  0x000055a6cc83ad23 in flatview_read_continue
+    (fv=fv@entry=0x7f2bac435dc0, addr=addr@entry=3324, attrs=..., ptr=ptr@entry=0x7f2bb9346000, len=len@entry=4, addr1=<optimized out>, l=<optimized out>, mr=0x55a6ce496740)
+    at /home/xb/project/virt/qemu/include/qemu/host-utils.h:219
+#9  0x000055a6cc83aed7 in flatview_read (fv=0x7f2bac435dc0, addr=addr@entry=3324, attrs=attrs@entry=..., buf=buf@entry=0x7f2bb9346000, len=len@entry=4)
+    at ../softmmu/physmem.c:2762
+#10 0x000055a6cc83b038 in address_space_read_full (as=0x55a6cd30d3c0 <address_space_io>, addr=3324, attrs=..., buf=0x7f2bb9346000, len=4) at ../softmmu/physmem.c:2775
+#11 0x000055a6cc83b185 in address_space_rw (as=as@entry=0x55a6cd30d3c0 <address_space_io>, addr=addr@entry=3324, attrs=..., 
+    attrs@entry=..., buf=<optimized out>, len=len@entry=4, is_write=is_write@entry=false) at ../softmmu/physmem.c:2803
+#12 0x000055a6cc88739f in kvm_handle_io (count=1, size=4, direction=<optimized out>, data=<optimized out>, attrs=..., port=3324) at ../accel/kvm/kvm-all.c:2778
+#13 kvm_cpu_exec (cpu=cpu@entry=0x55a6ce4584e0) at ../accel/kvm/kvm-all.c:3029
+#14 0x000055a6cc888585 in kvm_vcpu_thread_fn (arg=arg@entry=0x55a6ce4584e0) at ../accel/kvm/kvm-accel-ops.c:51
+#15 0x000055a6cc9fff93 in qemu_thread_start (args=<optimized out>) at ../util/qemu-thread-posix.c:541
+#16 0x00007f2bb8a61609 in start_thread (arg=<optimized out>) at pthread_create.c:477
+#17 0x00007f2bb8986353 in clone () at ../sysdeps/unix/sysv/linux/x86_64/clone.S:95
+
+
+
+read register:
+root@vm:/home/xb# devmem2 0xfea00000
+Thread 4 "qemu-system-x86" hit Breakpoint 1, edu_mmio_read (opaque=0x55a08eb1f130, addr=0, size=8) at ../hw/misc/edu.c:190
+190	{
+(gdb) bt
+#0  edu_mmio_read (opaque=0x55a08eb1f130, addr=0, size=8) at ../hw/misc/edu.c:190
+#1  0x000055a08c89e611 in memory_region_read_accessor (mr=mr@entry=0x55a08eb1fb60, addr=0, value=value@entry=0x7f403f0f66f0, size=size@entry=8, shift=0, mask=mask@entry=18446744073709551615, attrs=...) at ../softmmu/memory.c:441
+#2  0x000055a08c89e98e in access_with_adjusted_size (addr=addr@entry=0, value=value@entry=0x7f403f0f66f0, size=size@entry=8, access_size_min=<optimized out>, access_size_max=<optimized out>, access_fn=
+    0x55a08c89e5d0 <memory_region_read_accessor>, mr=0x55a08eb1fb60, attrs=...) at ../softmmu/memory.c:569
+#3  0x000055a08c89eb61 in memory_region_dispatch_read1 (attrs=..., size=8, pval=0x7f403f0f66f0, addr=<optimized out>, mr=<optimized out>) at ../softmmu/memory.c:1443
+#4  memory_region_dispatch_read (mr=mr@entry=0x55a08eb1fb60, addr=<optimized out>, pval=pval@entry=0x7f403f0f66f0, op=MO_64, attrs=attrs@entry=...) at ../softmmu/memory.c:1476
+#5  0x000055a08c8a8d23 in flatview_read_continue (fv=fv@entry=0x7f3f2805ad20, addr=addr@entry=4271898624, attrs=..., ptr=ptr@entry=0x7f4046dbd028, len=len@entry=8, addr1=<optimized out>, l=<optimized out>, mr=0x55a08eb1fb60)
+    at /home/xb/project/virt/qemu/include/qemu/host-utils.h:219
+#6  0x000055a08c8a8ed7 in flatview_read (fv=0x7f3f2805ad20, addr=addr@entry=4271898624, attrs=attrs@entry=..., buf=buf@entry=0x7f4046dbd028, len=len@entry=8) at ../softmmu/physmem.c:2762
+#7  0x000055a08c8a9038 in address_space_read_full (as=0x55a08d37b360 <address_space_memory>, addr=4271898624, attrs=..., buf=0x7f4046dbd028, len=8) at ../softmmu/physmem.c:2775
+#8  0x000055a08c8a9185 in address_space_rw (as=<optimized out>, addr=<optimized out>, attrs=..., attrs@entry=..., buf=buf@entry=0x7f4046dbd028, len=<optimized out>, is_write=<optimized out>) at ../softmmu/physmem.c:2803
+#9  0x000055a08c8f5328 in kvm_cpu_exec (cpu=cpu@entry=0x55a08dce0880) at ../accel/kvm/kvm-all.c:3039
+#10 0x000055a08c8f6585 in kvm_vcpu_thread_fn (arg=arg@entry=0x55a08dce0880) at ../accel/kvm/kvm-accel-ops.c:51
+#11 0x000055a08ca6df93 in qemu_thread_start (args=<optimized out>) at ../util/qemu-thread-posix.c:541
+#12 0x00007f40464dd609 in start_thread (arg=<optimized out>) at pthread_create.c:477
+#13 0x00007f4046402353 in clone () at ../sysdeps/unix/sysv/linux/x86_64/clone.S:95
+
+读4个字节:
+devmem2 0xfea00000 w
+handle SIGUSR1 noprint nostop
+
+get bar0:
+setpci -s 00:04.0 10.l
+
+查看所有寄存器:
+setpci --dumpregs
+
+查看mmio:
+root@vm:/home/xb# grep 00:04.0 /proc/iomem 
+  fea00000-feafffff : 0000:00:04.0
+root@vm:/home/xb# grep 00:05.0 /proc/iomem 
+  feb50000-feb53fff : 0000:00:05.0
+
+
+myedu bar0读写函数(回调):
+static const MemoryRegionOps edu_mmio_ops_bar01 = {
+    .read = edu_mmio_read_bar01,
+    .write = edu_mmio_write_bar01,
+
+edu_mmio_write_bar01
+    pci_default_read_config bar0,bar1
+    parse_bar01_reg_write
+    client_mem_write_msg3
+
+server_dma_worker
+  pci_dma_write
+
+
+
+/sys/devices/pci0000:00/0000:00:05.0/
+
+myedu start stack
+(gdb) bt
+#0  __GI_raise (sig=sig@entry=6) at ../sysdeps/unix/sysv/linux/raise.c:50
+#1  0x00007ffff750b859 in __GI_abort () at abort.c:79
+#2  0x0000555555862d4e in hw_error (fmt=fmt@entry=0x555555ea0046 "device is wrong\n") at ../softmmu/cpus.c:129
+#3  0x000055555594cf7b in pci_edu_realize (pdev=0x7ffff4256010, errp=<optimized out>) at ../hw/misc/myedu.c:1803
+#4  0x00005555559b11e9 in pci_qdev_realize (qdev=0x7ffff4256010, errp=<optimized out>) at ../hw/pci/pci.c:2124
+#5  0x0000555555c499df in device_set_realized (obj=<optimized out>, value=true, errp=0x7fffffffdd20) at ../hw/core/qdev.c:510
+#6  0x0000555555c4ce8a in property_set_bool (obj=0x7ffff4256010, v=<optimized out>, name=<optimized out>, opaque=0x555556762970, errp=0x7fffffffdd20) at ../qom/object.c:2285
+#7  0x0000555555c4f268 in object_property_set (obj=obj@entry=0x7ffff4256010, name=name@entry=0x555555f33e73 "realized", v=v@entry=0x55555787e7e0, errp=errp@entry=0x7fffffffdd20) at ../qom/object.c:1420
+#8  0x0000555555c524a4 in object_property_set_qobject (obj=obj@entry=0x7ffff4256010, name=name@entry=0x555555f33e73 "realized", value=value@entry=0x555557877ee0, errp=errp@entry=0x7fffffffdd20) at ../qom/qom-qobject.c:28
+#9  0x0000555555c4f4e9 in object_property_set_bool (obj=obj@entry=0x7ffff4256010, name=name@entry=0x555555f33e73 "realized", value=value@entry=true, errp=errp@entry=0x7fffffffdd20) at ../qom/object.c:1489
+#10 0x0000555555c49172 in qdev_realize (dev=dev@entry=0x7ffff4256010, bus=bus@entry=0x555556a7bf20, errp=errp@entry=0x7fffffffdd20) at ../hw/core/qdev.c:292
+#11 0x0000555555a681f6 in qdev_device_add_from_qdict (opts=opts@entry=0x555557878510, from_json=from_json@entry=false, errp=<optimized out>, errp@entry=0x5555566d6338 <error_fatal>) at ../softmmu/qdev-monitor.c:714
+#12 0x0000555555a68316 in qdev_device_add (opts=0x55555675f4b0, errp=errp@entry=0x5555566d6338 <error_fatal>) at ../softmmu/qdev-monitor.c:733
+#13 0x0000555555a6cf43 in device_init_func (opaque=<optimized out>, opts=<optimized out>, errp=0x5555566d6338 <error_fatal>) at ../softmmu/vl.c:1152
+#14 0x0000555555dbd7a2 in qemu_opts_foreach (list=<optimized out>, func=func@entry=0x555555a6cf30 <device_init_func>, opaque=opaque@entry=0x0, errp=0x5555566d6338 <error_fatal>) at ../util/qemu-option.c:1135
+#15 0x0000555555a6fdc1 in qemu_create_cli_devices () at ../softmmu/vl.c:2573
+#16 qmp_x_exit_preconfig (errp=0x5555566d6338 <error_fatal>) at ../softmmu/vl.c:2641
+#17 qmp_x_exit_preconfig (errp=0x5555566d6338 <error_fatal>) at ../softmmu/vl.c:2633
+#18 0x0000555555a73338 in qemu_init (argc=<optimized out>, argv=<optimized out>) at ../softmmu/vl.c:3648
+#19 0x000055555586316d in main (argc=<optimized out>, argv=<optimized out>) at ../softmmu/main.c:47
+
+
+初始化类:
+(gdb) bt
+#0  edu_class_init (class=0x555556798c70, data=0x0) at ../hw/misc/myedu.c:1974
+#1  0x0000555555c4deaf in type_initialize (ti=0x55555670a810) at ../qom/object.c:1081
+#2  object_class_foreach_tramp (key=<optimized out>, value=0x55555670a810, opaque=0x7fffffffdae0) at ../qom/object.c:1081
+#3  0x00007ffff7a0a1b8 in g_hash_table_foreach () at /lib/x86_64-linux-gnu/libglib-2.0.so.0
+#4  0x0000555555c4e40c in object_class_foreach (fn=fn@entry=
+    0x555555c4cc60 <object_class_get_list_tramp>, implements_type=implements_type@entry=0x555555f2ec48 "machine", include_abstract=include_abstract@entry=false, opaque=opaque@entry=0x7fffffffdb20)
+    at ../qom/object.c:87
+#5  0x0000555555c4e4b6 in object_class_get_list (implements_type=implements_type@entry=0x555555f2ec48 "machine", include_abstract=include_abstract@entry=false) at ../qom/object.c:1160
+#6  0x0000555555a70891 in select_machine (errp=<optimized out>, qdict=0x55555675ba30) at ../softmmu/vl.c:1599
+#7  qemu_create_machine (qdict=0x55555675ba30) at ../softmmu/vl.c:2032
+#8  qemu_init (argc=<optimized out>, argv=0x7fffffffdda8) at ../softmmu/vl.c:3575
+#9  0x000055555586316d in main (argc=<optimized out>, argv=<optimized out>) at ../softmmu/main.c:47
+
+read mmio, why, edu_mmio_read size == 8
+devmem2 0xfea00000 w
+
+
+edu spec:
+docs/specs/edu.txt
+
+
+resize qemu vm root part:
+truncate -s 50G ./ubuntu-20.04.5-desktop-big.qcow2
+sudo virt-resize --expand /dev/sda1 ./ubuntu-20.04.5-desktop.qcow2 ./ubuntu-20.04.5-desktop-big.qcow2  -v -x
+sudo virt-resize --expand /dev/sda5 ./ubuntu-20.04.5-desktop.qcow2 ./ubuntu-20.04.5-desktop-big.qcow2  -v -x
+
+get size:
+sudo virt-filesystems --long --parts --blkdevs -h -a ubuntu-20.04.5-desktop-big.qcow2
+
+中断
+中断原理及触发: https://phmatthaus.blog.csdn.net/article/details/135621181
+
+pci_change_irq_level, map_irq, set_irq
+
+pci_bus_irqs
+传给pci_bus_irqs函数的实参XEN_IOAPIC_NUM_PIRQS表示的实际是PCI链接设备的数目，PCI连接到中断控制器的配置是BIOS或者内核通过PIIX3的PIRQ[A-D]4个引脚配置的
+
+
+PCI设备调用pci_set_irq函数触发中断。pci_set_irq函数在hw/pci/pci.c中
+pci_set_irq函数首先调用pci_intx函数得到设备使用的INTX引脚
+
+
+epoll_wait
+
+
+
+snapshot, 设备迁移/migration, 虚机热迁移
+struct DeviceClass {
+    const VMStateDescription *vmsd;
+}
+
+
+VMStateDescription包含了一个设备要迁移所需的全部信息
+struct VMStateDescription {
+}
+
+qemu_savevm_state_complete_precopy
+	vmstate_save(f, se, vmdesc)
+  		vmstate_save_state(f, se->vmsd, se->opaque, vmdesc)
+  			vmstate_save_state_v(f, vmsd, opaque, vmdesc_id, vmsd->version_id)
+
+
+
+migration/qemu-file.h
+QIOChannel
+
+migrate_fd_connect
+    migration_thread
+
+
+Human Monitor (HMP)" and "QMP" to "Migration".
+hmp_migrate
+    qmp_migrate
+        migrate_prepare
+
+qemu_savevm_state_pending
+
+analyze-migration.py
+
+
+SNAPSHORT_STRUCT_INIT
+    
+
+
+start qemu:
+gdb --args ./x86_64-softmmu/qemu-system-x86_64 \
+    -machine accel=kvm -cpu host -smp sockets=2,cores=2,threads=1 -m 3072M \
+    -object memory-backend-file,id=mem,size=3072M,mem-path=/dev/hugepages,share=on \
+    -hda /home/kvm/disk/vm0.img -mem-prealloc -numa node,memdev=mem \
+    -vnc 0.0.0.0:00 -monitor stdio --enable-kvm \
+    -netdev type=tap,id=eth0,ifname=tap30,script=no,downscript=no 
+    -device e1000,netdev=eth0,mac=12:03:04:05:06:08 \
+    -chardev socket,id=char1,path=/tmp/vhostsock0,server \
+    -netdev type=vhost-user,id=mynet3,chardev=char1,vhostforce,queues=$QNUM 
+    -device virtio-net-pci,netdev=mynet3,id=net1,mac=00:00:00:00:00:03,disable-legacy=on
+
+net_init_netdev
+
+Breakpoint 2, virtio_net_pci_instance_init (obj=0x5555575b8740) at hw/virtio/virtio-pci.c:3364
+3364    {
+(gdb) bt
+#0  0x0000555555ab0c10 in virtio_net_pci_instance_init (obj=0x5555575b8740) at hw/virtio/virtio-pci.c:3364
+#1  0x0000555555b270bf in object_initialize_with_type (data=data@entry=0x5555575b8740, size=<optimized out>, type=type@entry=0x5555563c3070) at qom/object.c:384
+#2  0x0000555555b271e1 in object_new_with_type (type=0x5555563c3070) at qom/object.c:546
+#3  0x0000555555b27385 in object_new (typename=typename@entry=0x5555563d2310 "virtio-net-pci") at qom/object.c:556
+#4  0x000055555593b5c5 in qdev_device_add (opts=0x5555563d22a0, errp=errp@entry=0x7fffffffddd0) at qdev-monitor.c:625
+#5  0x000055555593db17 in device_init_func (opaque=<optimized out>, opts=<optimized out>, errp=<optimized out>) at vl.c:2289
+#6  0x0000555555c1ab6a in qemu_opts_foreach (list=<optimized out>, func=func@entry=0x55555593daf0 <device_init_func>, opaque=opaque@entry=0x0, errp=errp@entry=0x0) at util/qemu-option.c:1106
+#7  0x00005555557d85d6 in main (argc=<optimized out>, argv=<optimized out>, envp=<optimized out>) at vl.c:4593
+
+
