@@ -719,9 +719,9 @@ index 42f4aed8e84..256f38cdd5d 100644
 
 
 
-
-
-
-
-
+debug guest:
+#ifdef KVM_CAP_SET_GUEST_DEBUG
+    kvm_has_guest_debug =
+        (kvm_check_extension(s, KVM_CAP_SET_GUEST_DEBUG) > 0);
+KVM_CAP_SET_GUEST_DEBUG
 
