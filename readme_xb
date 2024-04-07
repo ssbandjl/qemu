@@ -698,3 +698,30 @@ Breakpoint 2, virtio_net_pci_instance_init (obj=0x5555575b8740) at hw/virtio/vir
 #7  0x00005555557d85d6 in main (argc=<optimized out>, argv=<optimized out>, envp=<optimized out>) at vl.c:4593
 
 
+centos7 surpport:
+git fetch https://github.com/patchew-project/qemu tags/patchew/20230810215706.1394220-1-iii@linux.ibm.com
+https://patchew.org/QEMU/20230810215706.1394220-1-iii@linux.ibm.com/20230810215706.1394220-3-iii@linux.ibm.com/
+
+diff --git a/linux-user/syscall.c b/linux-user/syscall.c
+index 42f4aed8e84..256f38cdd5d 100644
+--- a/linux-user/syscall.c
++++ b/linux-user/syscall.c
+@@ -121,6 +121,7 @@
+ #ifdef HAVE_BTRFS_H
+ #include <linux/btrfs.h>
+ #endif
++#include <linux/mman.h>
+ #ifdef HAVE_DRM_H
+ #include <libdrm/drm.h>
+ #include <libdrm/i915_drm.h>
+-- 
+2.41.0
+
+
+
+
+
+
+
+
+
