@@ -419,9 +419,9 @@ set max-value-size bytes 1048576
 
 
 qemu flow:
-softmmu/main.c -> main
-qemu_init(argc, argv);
-qemu_main_loop
+    softmmu/main.c -> main
+    qemu_init(argc, argv);
+    qemu_main_loop
 
 #0  dma_engine_register_types () at ../hw/misc/dma_engine.c:332
 #1  0x0000555555db7882 in module_call_init (type=type@entry=MODULE_INIT_QOM) at ../util/module.c:109
@@ -719,9 +719,189 @@ index 42f4aed8e84..256f38cdd5d 100644
 
 
 
+debug guest:
+#ifdef KVM_CAP_SET_GUEST_DEBUG
+    kvm_has_guest_debug =
+        (kvm_check_extension(s, KVM_CAP_SET_GUEST_DEBUG) > 0);
+KVM_CAP_SET_GUEST_DEBUG
+
+
+
+virtblk
+test, virtio-blk-test.c
 
 
 
 
+半虚拟化 virtio-blk 设备的使用。此示例显示具有 4 个 I/O 队列的 virtio-blk，后端设备为 disk.qcow2
+qemu sim blk dev:
+qemu-system-x86_64 -machine accel=kvm -vnc :0 -smp 4 -m 4096M \
+    -net nic -net user,hostfwd=tcp::5023-:22 \
+    -hda ol7.qcow2 -serial stdio \
+    -device virtio-blk-pci,drive=drive0,id=virtblk0,num-queues=4 \
+    -drive file=disk.qcow2,if=none,id=drive0
+
+# ls /sys/block/vda/mq/
+0  1  2  3
+
+
+static const MemoryRegionOps virtio_pci_config_ops = {
+    .read = virtio_pci_config_read,
+    .write = virtio_pci_config_write,
+    .impl = {
+        .min_access_size = 1,
+        .max_access_size = 4,
+    },
+    .endianness = DEVICE_LITTLE_ENDIAN,
+};
+
+# 前端驱动写Status位，val & VIRTIO_CONFIG_S_DRIVER_OK, 这时候前端驱动已经ready
+然后QEMU/KVM后端的处理流程如下：
+virtio_pci_config_write  --> virtio_ioport_write --> virtio_pci_start_ioeventfd
+--> virtio_bus_set_host_notifier --> virtio_bus_start_ioeventfd --> virtio_device_start_ioeventfd_impl
+--> virtio_bus_set_host_notifier
+    --> virtio_pci_ioeventfd_assign
+        --> memory_region_add_eventfd
+            --> memory_region_transaction_commit
+              --> address_space_update_ioeventfds
+                --> address_space_add_del_ioeventfds
+                  --> kvm_io_ioeventfd_add/vhost_eventfd_add
+                    --> kvm_set_ioeventfd_pio
+                      --> kvm_vm_ioctl(kvm_state, KVM_IOEVENTFD, &kick)
+
+
+virtio_pci_device_plugged -> 在qemu中，对PCI总线添加一个设备的时候，会调用该函数
+    ...
+    virtio_pci_legacy
+    virtio_pci_modern
+    proxy->pci_dev.config_write = virtio_write_config;
+    proxy->pci_dev.config_read = virtio_read_config;
+    memory_region_init_io(&proxy->bar, OBJECT(proxy), &virtio_pci_config_ops, proxy, "virtio-pci", size)
+    pci_register_bar(&proxy->pci_dev, proxy->legacy_io_bar_idx, PCI_BASE_ADDRESS_SPACE_IO, &proxy->bar)
+
+
+在QEMU/KVM这一侧，开始模拟MSIx中断，具体流程大致如下：
+
+virtio_pci_config_write
+  --> virtio_ioport_write
+    --> virtio_set_status
+      --> virtio_net_vhost_status
+        --> vhost_net_start
+          --> virtio_pci_set_guest_notifiers
+            --> kvm_virtio_pci_vector_use 
+              |--> kvm_irqchip_add_msi_route //更新中断路由表
+              |--> kvm_virtio_pci_irqfd_use  //使能MSI中断
+                 --> kvm_irqchip_add_irqfd_notifier_gsi
+                   --> kvm_irqchip_assign_irqfd
+                  
+# 申请MSIx中断的时候，会为MSIx分配一个gsi，并为这个gsi绑定一个irqfd，然后调用ioctl KVM_IRQFD注册到内核中。               
+static int kvm_irqchip_assign_irqfd(KVMState *s, int fd, int rfd, int virq,
+                                    bool assign)
+{
+    struct kvm_irqfd irqfd = {
+        .fd = fd,
+        .gsi = virq,
+        .flags = assign ? 0 : KVM_IRQFD_FLAG_DEASSIGN,
+    };
+
+    if (rfd != -1) {
+        irqfd.flags |= KVM_IRQFD_FLAG_RESAMPLE;
+        irqfd.resamplefd = rfd;
+    }
+
+    if (!kvm_irqfds_enabled()) {
+        return -ENOSYS;
+    }
+
+    return kvm_vm_ioctl(s, KVM_IRQFD, &irqfd);
+}
+
+# KVM内核代码virt/kvm/eventfd.c
+kvm_vm_ioctl(s, KVM_IRQFD, &irqfd)
+  --> kvm_irqfd_assign
+    --> vfs_poll(f.file, &irqfd->pt) // 在内核中poll这个irqfd
+
+
+从上面的流程可以看出，QEMU/KVM使用irqfd机制来模拟MSIx中断， 即设备申请MSIx中断的时候会为MSIx分配一个gsi（这个时候会刷新irq routing table）， 并为这个gsi绑定一个irqfd，最后在内核中去poll这个irqfd。 当QEMU处理完IO之后，就写MSIx对应的irqfd，给前端注入一个MSIx中断，告知前端我已经处理好IO了你可以来取结果了。
+
+例如，virtio-scsi从前端取出IO请求后会取做DMA操作（DMA是异步的，QEMU协程中负责处理）。 当DMA完成后QEMU需要告知前端IO请求已完成（Complete），那么怎么去投递这个MSIx中断呢？ 答案是调用virtio_notify_irqfd注入一个MSIx中断。
+
+#0  0x00005604798d569b in virtio_notify_irqfd (vdev=0x56047d12d670, vq=0x7fab10006110) at  hw/virtio/virtio.c:1684
+#1  0x00005604798adea4 in virtio_scsi_complete_req (req=0x56047d09fa70) at  hw/scsi/virtio-scsi.c:76
+#2  0x00005604798aecfb in virtio_scsi_complete_cmd_req (req=0x56047d09fa70) at  hw/scsi/virtio-scsi.c:468
+#3  0x00005604798aee9d in virtio_scsi_command_complete (r=0x56047ccb0be0, status=0, resid=0) at  hw/scsi/virtio-scsi.c:495
+#4  0x0000560479b397cf in scsi_req_complete (req=0x56047ccb0be0, status=0) at hw/scsi/scsi-bus.c:1404
+#5  0x0000560479b2b503 in scsi_dma_complete_noio (r=0x56047ccb0be0, ret=0) at hw/scsi/scsi-disk.c:279
+#6  0x0000560479b2b610 in scsi_dma_complete (opaque=0x56047ccb0be0, ret=0) at hw/scsi/scsi-disk.c:300
+#7  0x00005604799b89e3 in dma_complete (dbs=0x56047c6e9ab0, ret=0) at dma-helpers.c:118
+#8  0x00005604799b8a90 in dma_blk_cb (opaque=0x56047c6e9ab0, ret=0) at dma-helpers.c:136
+#9  0x0000560479cf5220 in blk_aio_complete (acb=0x56047cd77d40) at block/block-backend.c:1327
+#10 0x0000560479cf5470 in blk_aio_read_entry (opaque=0x56047cd77d40) at block/block-backend.c:1387
+#11 0x0000560479df49c4 in coroutine_trampoline (i0=2095821104, i1=22020) at util/coroutine-ucontext.c:115
+#12 0x00007fab214d82c0 in __start_context () at /usr/lib64/libc.so.6
+
+
+在virtio_notify_irqfd 函数中，会去写irqfd，给内核发送一个信号。
+
+void virtio_notify_irqfd(VirtIODevice *vdev, VirtQueue *vq)
+{
+    ...
+     /*
+     * virtio spec 1.0 says ISR bit 0 should be ignored with MSI, but
+     * windows drivers included in virtio-win 1.8.0 (circa 2015) are
+     * incorrectly polling this bit during crashdump and hibernation
+     * in MSI mode, causing a hang if this bit is never updated.
+     * Recent releases of Windows do not really shut down, but rather
+     * log out and hibernate to make the next startup faster.  Hence,
+     * this manifested as a more serious hang during shutdown with
+     *
+     * Next driver release from 2016 fixed this problem, so working around it
+     * is not a must, but it's easy to do so let's do it here.
+     *
+     * Note: it's safe to update ISR from any thread as it was switched
+     * to an atomic operation.
+     */
+    virtio_set_isr(vq->vdev, 0x1);
+    event_notifier_set(&vq->guest_notifier);   //写vq->guest_notifier，即irqfd
+}
+
+QEMU写了这个irqfd后，KVM内核模块中的irqfd poll就收到一个POLL_IN事件，然后将MSIx中断自动投递给对应的LAPIC。 大致流程是：POLL_IN -> kvm_arch_set_irq_inatomic -> kvm_set_msi_irq, kvm_irq_delivery_to_apic_fast
+
+static int
+irqfd_wakeup(wait_queue_entry_t *wait, unsigned mode, int sync, void *key)
+{
+        if (flags & EPOLLIN) {
+                idx = srcu_read_lock(&kvm->irq_srcu);
+                do {
+                        seq = read_seqcount_begin(&irqfd->irq_entry_sc);
+                        irq = irqfd->irq_entry;
+                } while (read_seqcount_retry(&irqfd->irq_entry_sc, seq));
+                /* An event has been signaled, inject an interrupt */
+                if (kvm_arch_set_irq_inatomic(&irq, kvm,
+                                             KVM_USERSPACE_IRQ_SOURCE_ID, 1,
+                                             false) == -EWOULDBLOCK)
+                        schedule_work(&irqfd->inject);
+                srcu_read_unlock(&kvm->irq_srcu, idx);
+        }
+
+
+virtio_blk_class_init
+    virtio_blk_device_realize
+
+
+
+virtio_net_add_queue
+    n->vqs[index].rx_vq = virtio_add_queue(vdev, n->net_conf.rx_queue_size, virtio_net_handle_rx)
+    virtio_add_queue(vdev, n->net_conf.tx_queue_size, virtio_net_handle_tx_bh)
+
+
+
+
+virtio_ioport_write
+    case VIRTIO_PCI_QUEUE_PFN
+        virtio_queue_set_addr(vdev, vdev->queue_sel, pa)
+
+
+virtio_queue_notify会调用VirtQueue的handle_output函数，前面已经设置过这个函数了，是virtio_blk_handle_output。接下来的调用链为：virtio_blk_handle_output->virtio_blk_handle_output_do->virtio_blk_handle_vq
 
 
