@@ -25,8 +25,8 @@ cd build
     --enable-debug \
     --extra-cflags="-gdwarf-4" \
     --enable-slirp \
-    --enable-virtfs
-    
+    --enable-virtfs \
+    --enable-sdl
 #    --enable-spice \
 #    --enable-spice-protocol
 
