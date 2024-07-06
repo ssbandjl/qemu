@@ -2090,4 +2090,62 @@ static void virtio_pci_bus_class_init(ObjectClass *klass, void *data)
 
 
 
+virtio test:
+virtio简介（四）—— 从零实现一个virtio设备: https://www.cnblogs.com/edver/p/15874178.html
+简介：前几节分析了virtio机制和现有的balloon设备实现，至此我们已经知道了virtio是什么、怎么使用的，本节我们就自己实现一个virtio纯虚设备。
+功能：
+1. QEMU模拟的设备启动一个定时器，每5秒发送一次中断通知 GUEST
+2. GUEST 对应的驱动接收到中断后将自身变量自增，然后通过 vring 发送给 QEMU
+3. QEMU 收到 GUEST 发送过来的消息后打印出接收到的数值 
+
+
+linux/virtio_ids.h
+...
+#define VIRTIO_ID_NET			1 /* virtio net */
+#define VIRTIO_ID_BLOCK			2 /* virtio block */
+#define VIRTIO_ID_CONSOLE		3 /* virtio console */
+#define VIRTIO_ID_RNG			4 /* virtio rng */
+#define VIRTIO_ID_BALLOON		5 /* virtio balloon */
+...
+#define VIRTIO_ID_TEST       21 /* virtio test */
+
+
+include/hw/pci/pci.h
+/* legacy virtio-pci devices */
+#define PCI_DEVICE_ID_VIRTIO_NET         0x1000
+#define PCI_DEVICE_ID_VIRTIO_BLOCK       0x1001
+...
+#define PCI_DEVICE_ID_VIRTIO_TEST       0x1013
+
+
+include/standard-headers/linux/virtio_balloon.h
+include/standard-headers/linux/virtio_blk.h
+include/standard-headers/linux/virtio_fs.h
+
+
+struct virtio_fs_config
+
+struct virtio_blk_config
+
+
+s->ivq = virtio_add_queue(vdev, 128, virtio_test_handle_output) -> 
+     for (;;)
+        elem = virtqueue_pop(vq, sizeof(VirtQueueElement))
+        iov_to_buf(elem->out_sg, elem->out_num, offset, &pfn, 4) == 4
+        int p = virtio_ldl_p(vdev, &pfn)
+        offset += 4
+        qemu_log("=========get virtio num:%d\n", p) -> QEMU 收到 GUEST 发送过来的消息后打印出接收到的数值
+        virtqueue_push(vq, elem, offset)
+        virtio_notify(vdev, vq) -> 通知内核驱动完成: callbacks -> test_ack -> virtqueue_get_buf(vq, &len)
+
+
+include/hw/virtio/virtio-pci.h
+#define TYPE_VIRTIO_PCI_BUS "virtio-pci-bus"
+#define TYPE_VIRTIO_PCI "virtio-pci"
+
+hw/virtio/virtio-pci.c
+
+-qemu -device virtio-test-pci
+
+
 
