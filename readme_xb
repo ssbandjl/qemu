@@ -93,6 +93,7 @@ rp_io_access
         rp_write(rp, (void *) &pay, len)
             qemu_chr_fe_write_all -> 从前端向字符后端写入数据。 该函数会将数据从前端发送到后端。 与@qemu_chr_fe_write不同，如果后端无法消耗所有尝试写入的数据，则该函数将阻塞。 该函数是线程安全的。 返回：消耗的字节数（如果没有关联的 Chardev，则为 0
                 qemu_chr_write -> https://martins3.github.io/qemu/char.html
+                    qemu_chr_write_buffer
         rp_dev_wait_resp
         rp_get_busaccess_response
         trace_remote_port_memory_master_rx_busaccess
@@ -1029,9 +1030,9 @@ virtio_ioport_write
 
 virtio_blk IO路径/全流程
 总结一下存储虚拟化的场景下，整个写入的过程，如下图所示：
-（1）在虚拟机里面，应用层调用write系统调用写入文件。
+（1）在虚拟机里面，应用层调用 write 系统调用写入文件。
 （2）write系统调用进入虚拟机里面的内核，经过VFS、通用块设备层、I/O调度层，到达块设备驱动。
-（3）虚拟机里面的块设备驱动是virtio_blk，它和通用的块设备驱动一样有一个request queue，另外有一个函数 make_request_fn 会被设置为blk_mq_make_request，这个函数用于将请求放入队列。
+（3）虚拟机里面的块设备驱动是 virtio_blk，它和通用的块设备驱动一样有一个 request queue，另外有一个函数 make_request_fn 会被设置为 blk_mq_make_request ，这个函数用于将请求放入队列。
 （4）虚拟机里面的块设备驱动是 virtio_blk，会注册一个中断处理函数 vp_interrupt 。当qemu写入完成之后，它会通知虚拟机里面的块设备驱动。
 （5）blk_mq_make_request 最终调用 virtqueue_add，将请求添加到传输队列 virtqueue 中，然后调用 virtqueue_notify 通知 qemu。
    ------------------------------------------------------------------------------------------------------------
@@ -1042,7 +1043,7 @@ virtio_blk IO路径/全流程
 （10）virtio_blk_handle_request 会调用 blk_aio_pwritev，通过 BlockBackend 驱动写入qcow2文件。
 （11）写入完毕之后，virtio_blk_req_complete 会调用 virtio_notify 通知虚拟机里面的驱动，数据写入完成，刚才注册的中断处理函数 vp_interrupt 会收到这个通知
 
-virtio_queue_notify会调用VirtQueue的handle_output函数，前面已经设置过这个函数了，是virtio_blk_handle_output。接下来的调用链为：virtio_blk_handle_output->virtio_blk_handle_output_do->virtio_blk_handle_vq
+virtio_queue_notify 会调用VirtQueue的 handle_output 函数，前面已经设置过这个函数了，是 virtio_blk_handle_output 。接下来的调用链为：virtio_blk_handle_output->virtio_blk_handle_output_do->virtio_blk_handle_vq
     virtio_queue_set_notification -> virtio：轮询期间不启用通知，轮询期间不需要 Virtqueue 通知，因此我们禁用它们。这允许客户机驱动程序避免 MMIO vmexits。不幸的是，virtio-blk 和 virtio-scsi 处理程序函数重新启用通知，从而破坏了这种优化。修复 virtio-blk 和 virtio-scsi 模拟，使它们保持通知禁用状态。为了正确起见，要记住的关键是轮询总是在结束循环后最后一次检查，因此在轮询结束时重新启用通知时，输掉竞争是安全的。使用 null-co 块驱动程序，性能可提高 5-10%。实际存储配置将看到较小的改进，因为 MMIO vmexit 开销对延迟的影响较小
         virtio_queue_packed_set_notification(vq, enable)
             vring_packed_off_wrap_write(vq->vdev, &caches->used, off_wrap)
@@ -1074,7 +1075,8 @@ virtio_queue_notify会调用VirtQueue的handle_output函数，前面已经设置
         virtio_blk_init_request(s, vq, req) -> bind virtioblk and vq to req
             req->dev = s
             req->vq = vq
-    virtio_blk_handle_request(req, &mrb)
+    MultiReqBuffer mrb = {}
+    virtio_blk_handle_request(req, &mrb) -> 当 mrb(多请求缓冲区) 满或者队列遍历完之后调用virtio_blk_submit_multireq函数将IO请求提交给后端驱动
         switch (type & ~(VIRTIO_BLK_T_OUT | VIRTIO_BLK_T_BARRIER)) 
         case VIRTIO_BLK_T_IN
             virtio_blk_submit_multireq
@@ -1214,6 +1216,9 @@ const VhostOps vdpa_ops = {
         .vhost_set_iotlb_callback = NULL,
         .vhost_send_device_iotlb_msg = NULL,
         .vhost_dev_start = vhost_vdpa_dev_start,
+            vhost_vdpa_host_notifiers_init
+            vhost_vdpa_svqs_start
+            vhost_vdpa_add_status(dev, VIRTIO_CONFIG_S_DRIVER_OK) -> 前端驱动操作完成，启动virtio设备数据面操作
         .vhost_get_device_id = vhost_vdpa_get_device_id,
         .vhost_vq_get_addr = vhost_vdpa_vq_get_addr,
         .vhost_force_iommu = vhost_vdpa_force_iommu,
@@ -1332,6 +1337,11 @@ const VhostOps user_ops = {
             .hdr.request = VHOST_USER_SET_INFLIGHT_FD
             vhost_user_write(dev, &msg, &inflight->fd, 1)
         .vhost_dev_start = vhost_user_dev_start,
+            virtio_has_feature
+            vhost_user_add_status
+                vhost_user_set_status(dev, s) -> VIRTIO_CONFIG_S_DRIVER_OK -> 前端驱动操作完成，启动virtio设备数据面操作
+                    .hdr.flags = VHOST_USER_VERSION
+                    vhost_user_write_sync(dev, &msg, wait_for_reply)
         .vhost_reset_status = vhost_user_reset_status,
         .vhost_supports_device_state = vhost_user_supports_device_state,
         .vhost_set_device_state_fd = vhost_user_set_device_state_fd,
@@ -1364,6 +1374,8 @@ tests/qtest/vhost-user-blk-test.c -> register_vhost_user_blk_test
     qos_add_test("basic", "vhost-user-blk", basic, &opts)
 
 
+
+qemu -device vhost-scsi -> vhost_scsi_class_init
 vhost_scsi_realize
     vhost_dev_init
         vhost_set_backend_type
@@ -1531,6 +1543,7 @@ static const TypeInfo vhost_user_blk_info = {
     .instance_size = sizeof(VHostUserBlk),
     .instance_init = vhost_user_blk_instance_init,
     .class_init = vhost_user_blk_class_init,
+        vdc->realize = vhost_user_blk_device_realize
 };
 
 
@@ -1642,9 +1655,12 @@ qemu_init
                                                     for (i = 0; i < s->num_queues; i++)
                                                         s->virtqs[i] = virtio_add_queue(vdev, s->queue_size, vhost_user_blk_handle_output)
                                                         vhost_user_blk_handle_output
+                                                            vhost_dev_is_started
                                                             vhost_user_blk_start
+                                                            for -> Kick right away to begin processing requests already in vring
                                                             VirtQueue *kick_vq = virtio_get_queue(vdev, i)
-                                                            virtio_queue_get_desc_addr(vdev, i) -> vdev->vq[n].vring.desc
+                                                            virtio_queue_get_desc_addr(vdev, i)
+                                                                return vdev->vq[n].vring.desc
                                                             event_notifier_set(virtio_queue_get_host_notifier(kick_vq))
                                                     s->inflight = g_new0(struct vhost_inflight, 1)
                                                     s->vhost_vqs = g_new0(struct vhost_virtqueue, s->num_queues)
@@ -1661,7 +1677,7 @@ qemu_init
                                                                     status & VIRTIO_CONFIG_S_DRIVER_OK
                                                                     vhost_user_blk_start(vdev, errp)
                                                                         vhost_dev_enable_notifiers
-                                                                        set_guest_notifiers
+                                                                        k->set_guest_notifiers(qbus->parent, s->dev.nvqs, true)
                                                                         vhost_dev_prepare_inflight
                                                                             vhost_dev_set_features(hdev, hdev->log_enabled)
                                                                                 features |= 0x1ULL << VHOST_F_LOG_ALL
@@ -2025,6 +2041,8 @@ blkioq_do_io
 
 
 virtio_pci_device_plugged
+    modern = virtio_pci_modern(proxy)
+    ...
     virtio_pci_modern_regions_init
         static const MemoryRegionOps common_ops = {
             .read = virtio_pci_common_read,
@@ -2037,6 +2055,13 @@ virtio_pci_device_plugged
         static const MemoryRegionOps device_ops = {
             .read = virtio_pci_device_read,
             .write = virtio_pci_device_write,
+                case 1:
+                    virtio_config_modern_writeb(vdev, addr, val);
+                        k->set_config(vdev, vdev->config)
+                case 2:
+                    virtio_config_modern_writew(vdev, addr, val);
+                case 4:
+                    virtio_config_modern_writel(vdev, addr, val);
         };
         static const MemoryRegionOps notify_ops = {
             .read = virtio_pci_notify_read,
@@ -2146,6 +2171,178 @@ include/hw/virtio/virtio-pci.h
 hw/virtio/virtio-pci.c
 
 -qemu -device virtio-test-pci
+
+
+qemu默认有一个主线程，借助glib的事件循环机制实现事件的监听分发。virtio-blk设备配置iothread后，virtio队列请求都会在iothread中的协程中处理，否则就在main loop里。当aio配置为threads时，会创建AIO线程池向后端的驱动下发IO。IO完成以后，对于virtio-blk-device来说需要通知主线程往guest中注入中断。因此，整个流程涉及到很多的线程创建及同步，从测试后抓到的火焰图来看性能的开销还是比较大的
+
+
+type_init(virtio_register_types)
+type_register_static(&virtio_scsi_common_info)
+type_register_static(&virtio_scsi_info)
+static void virtio_scsi_class_init(ObjectClass *klass, void *data)
+{
+    vdc->realize = virtio_scsi_device_realize;
+        virtio_scsi_common_realize(dev, virtio_scsi_handle_ctrl, virtio_scsi_handle_event, virtio_scsi_handle_cmd, &err)
+    vdc->set_config = virtio_scsi_set_config;
+    vdc->get_features = virtio_scsi_get_features;
+    vdc->reset = virtio_scsi_reset;
+    vdc->start_ioeventfd = virtio_scsi_dataplane_start;
+    vdc->stop_ioeventfd = virtio_scsi_dataplane_stop;
+    hc->pre_plug = virtio_scsi_pre_hotplug;
+    hc->plug = virtio_scsi_hotplug;
+    hc->unplug = virtio_scsi_hotunplug;
+}
+
+type_init(vhost_user_scsi_pci_register)
+    virtio_pci_types_register(&vhost_user_scsi_pci_info)
+qemu -device vhost-user-scsi-pci
+vhost_user_scsi_pci_info
+    .generic_name          = "vhost-user-scsi-pci"
+    .instance_init = vhost_user_scsi_pci_instance_init,
+    .class_init    = vhost_user_scsi_pci_class_init,
+        k->realize = vhost_user_scsi_pci_realize -> vhost_user_scsi_realize
+
+
+type_register_static(&vhost_user_scsi_info)
+    vhost_user_scsi_class_init
+        vdc->realize = vhost_user_scsi_realize;
+vhost_user_scsi_realize
+    virtio_scsi_common_realize(dev, vhost_user_scsi_handle_output, vhost_user_scsi_handle_output, vhost_user_scsi_handle_output, &err)
+        virtio_init(vdev, VIRTIO_ID_SCSI, sizeof(VirtIOSCSIConfig))
+        s->ctrl_vq = virtio_add_queue(vdev, s->conf.virtqueue_size, ctrl); -> vhost_user_scsi_handle_output
+            vhost_user_scsi_start(s, &local_err) -> vq is start status?
+                vhost_scsi_common_start
+                    vhost_dev_enable_notifiers
+                        virtio_device_grab_ioeventfd
+                        memory_region_transaction_begin
+                        virtio_bus_set_host_notifier
+                        memory_region_transaction_commit
+                    k->set_guest_notifiers(qbus->parent, vsc->dev.nvqs, true) -> virtio_pci_set_guest_notifiers
+                         bool with_irqfd = msix_enabled
+                        virtio_pci_set_guest_notifier(d, n, assign, with_irqfd)
+                        msix_set_vector_notifiers
+                    vhost_dev_prepare_inflight
+                        vhost_dev_set_features(hdev, hdev->log_enabled)
+                    vhost_dev_start(&vsc->dev, vdev, true) -> int vhost_dev_start(struct vhost_dev *hdev, VirtIODevice *vdev, bool vrings)
+                    vhost_virtqueue_mask(&vsc->dev, vdev, vsc->dev.vq_index + i, false)
+             for (i = 0; i < vsc->dev.nvqs; i++)
+                VirtQueue *kick_vq = virtio_get_queue(vdev, i)
+                virtio_queue_get_desc_addr(vdev, i)
+                event_notifier_set(virtio_queue_get_host_notifier(kick_vq)
+        s->event_vq = virtio_add_queue(vdev, s->conf.virtqueue_size, evt);
+        for (i = 0; i < s->conf.num_queues; i++) {
+            s->cmd_vqs[i] = virtio_add_queue(vdev, s->conf.virtqueue_size, cmd);
+        }
+    scsi_bus_init_named(&s->bus, sizeof(s->bus), dev, &virtio_scsi_scsi_info, vdev->bus_name)
+    qbus_set_hotplug_handler(BUS(&s->bus), OBJECT(dev))
+    virtio_scsi_dataplane_setup(s, errp)
+
+
+#0  virtio_scsi_common_realize (dev=0x5555580da1a0, ctrl=0x5555561d6b16, evt=0x5555561d6ad8, cmd=0x175707cb00, errp=0x5555561d6cd0 <__func__.32840>) at ../hw/scsi/virtio-scsi.c:1196
+#1  0x0000555555ab8fcb in vhost_user_scsi_realize (dev=0x5555580da1a0, errp=0x7fffffffd110) at ../hw/scsi/vhost-user-scsi.c:266
+#2  0x0000555555d78f90 in virtio_device_realize (dev=0x5555580da1a0, errp=0x7fffffffd170) at ../hw/virtio/virtio.c:3667
+#3  0x0000555555e1daed in device_set_realized (obj=0x5555580da1a0, value=true, errp=0x7fffffffd430) at ../hw/core/qdev.c:510
+#4  0x0000555555e27d6e in property_set_bool (obj=0x5555580da1a0, v=0x55555809de80, name=0x555556280621 "realized", opaque=0x555557097c30, errp=0x7fffffffd430) at ../qom/object.c:2346
+#5  0x0000555555e25c95 in object_property_set (obj=0x5555580da1a0, name=0x555556280621 "realized", v=0x55555809de80, errp=0x7fffffffd430) at ../qom/object.c:1476
+#6  0x0000555555e2a23f in object_property_set_qobject (obj=0x5555580da1a0, name=0x555556280621 "realized", value=0x55555809ddc0, errp=0x7fffffffd430) at ../qom/qom-qobject.c:28
+#7  0x0000555555e2600f in object_property_set_bool (obj=0x5555580da1a0, name=0x555556280621 "realized", value=true, errp=0x7fffffffd430) at ../qom/object.c:1545
+#8  0x0000555555e1d2ad in qdev_realize (dev=0x5555580da1a0, bus=0x5555580da120, errp=0x7fffffffd430) at ../hw/core/qdev.c:292
+#9  0x0000555555d9836c in vhost_user_scsi_pci_realize (vpci_dev=0x5555580d1dd0, errp=0x7fffffffd430) at ../hw/virtio/vhost-user-scsi-pci.c:68
+#10 0x0000555555b26821 in virtio_pci_realize (pci_dev=0x5555580d1dd0, errp=0x7fffffffd430) at ../hw/virtio/virtio-pci.c:2226
+#11 0x0000555555a5bfcc in pci_qdev_realize (qdev=0x5555580d1dd0, errp=0x7fffffffd4f0) at ../hw/pci/pci.c:2117
+#12 0x0000555555b26c19 in virtio_pci_dc_realize (qdev=0x5555580d1dd0, errp=0x7fffffffd4f0) at ../hw/virtio/virtio-pci.c:2318
+#13 0x0000555555e1daed in device_set_realized (obj=0x5555580d1dd0, value=true, errp=0x7fffffffd760) at ../hw/core/qdev.c:510
+#14 0x0000555555e27d6e in property_set_bool (obj=0x5555580d1dd0, v=0x555558098ff0, name=0x555556280621 "realized", opaque=0x555557097c30, errp=0x7fffffffd760) at ../qom/object.c:2346
+#15 0x0000555555e25c95 in object_property_set (obj=0x5555580d1dd0, name=0x555556280621 "realized", v=0x555558098ff0, errp=0x7fffffffd760) at ../qom/object.c:1476
+#16 0x0000555555e2a23f in object_property_set_qobject (obj=0x5555580d1dd0, name=0x555556280621 "realized", value=0x555558099260, errp=0x7fffffffd760) at ../qom/qom-qobject.c:28
+#17 0x0000555555e2600f in object_property_set_bool (obj=0x5555580d1dd0, name=0x555556280621 "realized", value=true, errp=0x7fffffffd760) at ../qom/object.c:1545
+#18 0x0000555555e1d2ad in qdev_realize (dev=0x5555580d1dd0, bus=0x55555744b6a0, errp=0x7fffffffd760) at ../hw/core/qdev.c:292
+#19 0x0000555555b78390 in qdev_device_add_from_qdict (opts=0x555558095540, from_json=false, errp=0x7fffffffd760) at ../system/qdev-monitor.c:719
+#20 0x0000555555b78432 in qdev_device_add (opts=0x555557094a00, errp=0x555556fef3c0 <error_fatal>) at ../system/qdev-monitor.c:738
+#21 0x0000555555b8196c in device_init_func (opaque=0x0, opts=0x555557094a00, errp=0x555556fef3c0 <error_fatal>) at ../system/vl.c:1200
+#22 0x0000555556023e16 in qemu_opts_foreach (list=0x555556ed7a80 <qemu_device_opts>, func=0x555555b81941 <device_init_func>, opaque=0x0, errp=0x555556fef3c0 <error_fatal>) at ../util/qemu-option.c:1135
+#23 0x0000555555b8513a in qemu_create_cli_devices () at ../system/vl.c:2627
+#24 0x0000555555b852fe in qmp_x_exit_preconfig (errp=0x555556fef3c0 <error_fatal>) at ../system/vl.c:2695
+#25 0x0000555555b87a74 in qemu_init (argc=26, argv=0x7fffffffdb88) at ../system/vl.c:3723
+#26 0x0000555555e18b27 in main (argc=26, argv=0x7fffffffdb88) at ../system/main.c:47
+
+
+#0  vhost_user_scsi_handle_output (vdev=0xc7a75ee9c831f300, vq=0x5555561f0da7) at ../hw/scsi/vhost-user-scsi.c:97
+#1  0x0000555555d75748 in virtio_queue_notify_vq (vq=0x5555580db870) at ../hw/virtio/virtio.c:2268
+#2  0x0000555555d78c1e in virtio_queue_host_notifier_read (n=0x5555580db8e4) at ../hw/virtio/virtio.c:3590
+#3  0x0000555555b20ad4 in virtio_bus_cleanup_host_notifier (bus=0x5555580da120, n=2) at ../hw/virtio/virtio-bus.c:321
+#4  0x0000555555b3a107 in vhost_dev_disable_notifiers_nvqs (hdev=0x5555580da440, vdev=0x5555580da1a0, nvqs=4) at ../hw/virtio/vhost.c:1639
+#5  0x0000555555b3a264 in vhost_dev_disable_notifiers (hdev=0x5555580da440, vdev=0x5555580da1a0) at ../hw/virtio/vhost.c:1690
+#6  0x0000555555d47de6 in vhost_scsi_common_stop (vsc=0x5555580da1a0) at ../hw/scsi/vhost-scsi-common.c:121
+#7  0x0000555555ab881d in vhost_user_scsi_stop (s=0x5555580da1a0) at ../hw/scsi/vhost-user-scsi.c:62
+#8  0x0000555555ab8931 in vhost_user_scsi_set_status (vdev=0x5555580da1a0, status=0 '\000') at ../hw/scsi/vhost-user-scsi.c:92
+#9  0x0000555555d74d07 in virtio_set_status (vdev=0x5555580da1a0, val=0 '\000') at ../hw/virtio/virtio.c:2048
+#10 0x0000555555b24d5a in virtio_pci_common_write (opaque=0x5555580d1dd0, addr=20, val=0, size=1) at ../hw/virtio/virtio-pci.c:1580
+#11 0x0000555555da3c7d in memory_region_write_accessor (mr=0x5555580d2910, addr=20, value=0x7fffef5993c8, size=1, shift=0, mask=255, attrs=...) at ../system/memory.c:497
+#12 0x0000555555da3f94 in access_with_adjusted_size (addr=20, value=0x7fffef5993c8, size=1, access_size_min=1, access_size_max=4, access_fn=0x555555da3b83 <memory_region_write_accessor>, mr=0x5555580d2910, attrs=...) at ../system/memory.c:573
+#13 0x0000555555da70d0 in memory_region_dispatch_write (mr=0x5555580d2910, addr=20, data=0, op=MO_8, attrs=...) at ../system/memory.c:1521
+#14 0x0000555555db49a3 in flatview_write_continue (fv=0x7fffa00d2680, addr=4261412884, attrs=..., ptr=0x7ffff7fc6028, len=1, addr1=20, l=1, mr=0x5555580d2910) at ../system/physmem.c:2714
+#15 0x0000555555db4b0a in flatview_write (fv=0x7fffa00d2680, addr=4261412884, attrs=..., buf=0x7ffff7fc6028, len=1) at ../system/physmem.c:2756
+#16 0x0000555555db4eca in address_space_write (as=0x555556fdb180 <address_space_memory>, addr=4261412884, attrs=..., buf=0x7ffff7fc6028, len=1) at ../system/physmem.c:2863
+#17 0x0000555555db4f3b in address_space_rw (as=0x555556fdb180 <address_space_memory>, addr=4261412884, attrs=..., buf=0x7ffff7fc6028, len=1, is_write=true) at ../system/physmem.c:2873
+#18 0x0000555555e09144 in kvm_cpu_exec (cpu=0x55555739c680) at ../accel/kvm/kvm-all.c:2902
+#19 0x0000555555e0bf96 in kvm_vcpu_thread_fn (arg=0x55555739c680) at ../accel/kvm/kvm-accel-ops.c:50
+#20 0x0000555556018eba in qemu_thread_start (args=0x5555573a5ff0) at ../util/qemu-thread-posix.c:541
+#21 0x00007ffff753f609 in start_thread (arg=<optimized out>) at pthread_create.c:477
+#22 0x00007ffff7464353 in clone () at ../sysdeps/unix/sysv/linux/x86_64/clone.S:95
+
+
+#0  virtio_blk_handle_request (req=0x7ffff54c4db8, mrb=0x2) at ../hw/block/virtio-blk.c:929
+#1  0x0000555555d1a84a in virtio_blk_handle_vq (s=0x5555582a9f50, vq=0x5555582b5178) at ../hw/block/virtio-blk.c:1122
+#2  0x0000555555d1a98a in virtio_blk_handle_output (vdev=0x5555582a9f50, vq=0x5555582b5178) at ../hw/block/virtio-blk.c:1155
+#3  0x0000555555d75748 in virtio_queue_notify_vq (vq=0x5555582b5178) at ../hw/virtio/virtio.c:2268
+#4  0x0000555555d78c1e in virtio_queue_host_notifier_read (n=0x5555582b51ec) at ../hw/virtio/virtio.c:3590
+#5  0x0000555556014059 in aio_dispatch_handler (ctx=0x5555570954f0, node=0x7fff8c008ed0) at ../util/aio-posix.c:372
+#6  0x00005555560141fc in aio_dispatch_handlers (ctx=0x5555570954f0) at ../util/aio-posix.c:414
+#7  0x0000555556014256 in aio_dispatch (ctx=0x5555570954f0) at ../util/aio-posix.c:424
+#8  0x0000555556031aa4 in aio_ctx_dispatch (source=0x5555570954f0, callback=0x0, user_data=0x0) at ../util/async.c:360
+#9  0x00007ffff79a917d in g_main_context_dispatch () at /lib/x86_64-linux-gnu/libglib-2.0.so.0
+#10 0x00005555560330c3 in glib_pollfds_poll () at ../util/main-loop.c:287
+#11 0x0000555556033141 in os_host_main_loop_wait (timeout=58666457) at ../util/main-loop.c:310
+#12 0x0000555556033252 in main_loop_wait (nonblocking=0) at ../util/main-loop.c:589
+#13 0x0000555555b7eaf4 in qemu_main_loop () at ../system/runstate.c:783
+#14 0x0000555555e18af1 in qemu_default_main () at ../system/main.c:37
+#15 0x0000555555e18b30 in main (argc=26, argv=0x7fffffffdb88) at ../system/main.c:48
+
+
+
+#0  virtio_scsi_common_realize (dev=0x5555580da1a0, ctrl=0x5555561d6b16, evt=0x5555561d6ad8, cmd=0x175707cb00, errp=0x5555561d6cd0 <__func__.32840>) at ../hw/scsi/virtio-scsi.c:1196
+#1  0x0000555555ab8fcb in vhost_user_scsi_realize (dev=0x5555580da1a0, errp=0x7fffffffd110) at ../hw/scsi/vhost-user-scsi.c:266
+#2  0x0000555555d78f90 in virtio_device_realize (dev=0x5555580da1a0, errp=0x7fffffffd170) at ../hw/virtio/virtio.c:3667
+#3  0x0000555555e1daed in device_set_realized (obj=0x5555580da1a0, value=true, errp=0x7fffffffd430) at ../hw/core/qdev.c:510
+#4  0x0000555555e27d6e in property_set_bool (obj=0x5555580da1a0, v=0x55555809de80, name=0x555556280621 "realized", opaque=0x555557097c30, errp=0x7fffffffd430) at ../qom/object.c:2346
+#5  0x0000555555e25c95 in object_property_set (obj=0x5555580da1a0, name=0x555556280621 "realized", v=0x55555809de80, errp=0x7fffffffd430) at ../qom/object.c:1476
+#6  0x0000555555e2a23f in object_property_set_qobject (obj=0x5555580da1a0, name=0x555556280621 "realized", value=0x55555809ddc0, errp=0x7fffffffd430) at ../qom/qom-qobject.c:28
+#7  0x0000555555e2600f in object_property_set_bool (obj=0x5555580da1a0, name=0x555556280621 "realized", value=true, errp=0x7fffffffd430) at ../qom/object.c:1545
+#8  0x0000555555e1d2ad in qdev_realize (dev=0x5555580da1a0, bus=0x5555580da120, errp=0x7fffffffd430) at ../hw/core/qdev.c:292
+#9  0x0000555555d9836c in vhost_user_scsi_pci_realize (vpci_dev=0x5555580d1dd0, errp=0x7fffffffd430) at ../hw/virtio/vhost-user-scsi-pci.c:68
+#10 0x0000555555b26821 in virtio_pci_realize (pci_dev=0x5555580d1dd0, errp=0x7fffffffd430) at ../hw/virtio/virtio-pci.c:2226
+#11 0x0000555555a5bfcc in pci_qdev_realize (qdev=0x5555580d1dd0, errp=0x7fffffffd4f0) at ../hw/pci/pci.c:2117
+#12 0x0000555555b26c19 in virtio_pci_dc_realize (qdev=0x5555580d1dd0, errp=0x7fffffffd4f0) at ../hw/virtio/virtio-pci.c:2318
+#13 0x0000555555e1daed in device_set_realized (obj=0x5555580d1dd0, value=true, errp=0x7fffffffd760) at ../hw/core/qdev.c:510
+#14 0x0000555555e27d6e in property_set_bool (obj=0x5555580d1dd0, v=0x555558098ff0, name=0x555556280621 "realized", opaque=0x555557097c30, errp=0x7fffffffd760) at ../qom/object.c:2346
+#15 0x0000555555e25c95 in object_property_set (obj=0x5555580d1dd0, name=0x555556280621 "realized", v=0x555558098ff0, errp=0x7fffffffd760) at ../qom/object.c:1476
+#16 0x0000555555e2a23f in object_property_set_qobject (obj=0x5555580d1dd0, name=0x555556280621 "realized", value=0x555558099260, errp=0x7fffffffd760) at ../qom/qom-qobject.c:28
+#17 0x0000555555e2600f in object_property_set_bool (obj=0x5555580d1dd0, name=0x555556280621 "realized", value=true, errp=0x7fffffffd760) at ../qom/object.c:1545
+#18 0x0000555555e1d2ad in qdev_realize (dev=0x5555580d1dd0, bus=0x55555744b6a0, errp=0x7fffffffd760) at ../hw/core/qdev.c:292
+#19 0x0000555555b78390 in qdev_device_add_from_qdict (opts=0x555558095540, from_json=false, errp=0x7fffffffd760) at ../system/qdev-monitor.c:719
+#20 0x0000555555b78432 in qdev_device_add (opts=0x555557094a00, errp=0x555556fef3c0 <error_fatal>) at ../system/qdev-monitor.c:738
+#21 0x0000555555b8196c in device_init_func (opaque=0x0, opts=0x555557094a00, errp=0x555556fef3c0 <error_fatal>) at ../system/vl.c:1200
+#22 0x0000555556023e16 in qemu_opts_foreach (list=0x555556ed7a80 <qemu_device_opts>, func=0x555555b81941 <device_init_func>, opaque=0x0, errp=0x555556fef3c0 <error_fatal>) at ../util/qemu-option.c:1135
+#23 0x0000555555b8513a in qemu_create_cli_devices () at ../system/vl.c:2627
+#24 0x0000555555b852fe in qmp_x_exit_preconfig (errp=0x555556fef3c0 <error_fatal>) at ../system/vl.c:2695
+#25 0x0000555555b87a74 in qemu_init (argc=26, argv=0x7fffffffdb88) at ../system/vl.c:3723
+#26 0x0000555555e18b27 in main (argc=26, argv=0x7fffffffdb88) at ../system/main.c:47
+
+
+
+virtio_scsi_common_realize(dev, virtio_scsi_handle_ctrl, virtio_scsi_handle_event, virtio_scsi_handle_cmd, &err)
+
 
 
 

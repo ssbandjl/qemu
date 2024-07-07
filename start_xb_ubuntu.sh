@@ -3,9 +3,11 @@
 # /root/project/virt/qemu/build/qemu-img create -f qcow2 ubuntu20.qcow2 16G
 
 cd /root/big/qemu/
-/root/project/virt/qemu/build/qemu-img create -f qcow2 ubuntu20.qcow2 16G
+/root/project/virt/qemu/build/qemu-img create -f qcow2 ubuntu20.qcow2 32G  # big disk for install kernel
 
 # install os
+# vncserver -kill :21
+# vncserver :21 -geometry 1920x1080
 # /root/project/virt/qemu/build/qemu-system-x86_64 -m 4096 -smp 2 --enable-kvm -drive file=/root/big/qemu/ubuntu20.qcow2,format=qcow2 -boot order=d -cdrom /root/big/iso/ubuntu-20.04.6-desktop-amd64.iso
 
 # start vm, need filter log event

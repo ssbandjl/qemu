@@ -1,0 +1,64 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "qemu_debug",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/qemu-system-x86_64",
+      "args": [
+        "-enable-kvm", "-cpu", "host", "-smp", "cores=8,sockets=1",
+        "-m","1G", "-object", "memory-backend-file,id=mem0,size=1G,mem-path=/dev/hugepages,share=on", "-numa", "node,memdev=mem0",
+        "-drive", "file=/root/big/qemu/ubuntu20.qcow2,if=virtio",
+        "-chardev", "socket,id=spdk_vhost_scsi0,path=/var/tmp/vhost.0",
+        "-device", "vhost-user-scsi-pci,id=scsi0,chardev=spdk_vhost_scsi0,num_queues=2",
+        "-nic", "user,hostfwd=tcp::2222-:22",
+        "-device", "usb-ehci,id=usb,bus=pci.0,addr=0x8",
+        "-device", "usb-tablet",
+        "-vnc", ":75",
+      ],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}/build",
+      "environment": [
+        {
+          "name": "LD_LIBRARY_PATH_X",
+          "value": "/home/xb/project/rdma/rdma-core/build/lib"
+        }
+      ],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "/usr/bin/gdb",
+      "setupCommands": [
+        {
+          "description": "Enable pretty-printing for gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        },
+        {
+          "description": "Set Disassembly Flavor to Intel",
+          "text": "-gdb-set disassembly-flavor intel",
+          "ignoreFailures": true
+        }
+      ]
+    },
+    {
+      "name": "C/C++ Runner: Debug Session",
+      "type": "cppdbg",
+      "request": "launch",
+      "args": [],
+      "stopAtEntry": false,
+      "externalConsole": false,
+      "cwd": "/root/project/virt/qemu",
+      "program": "/root/project/virt/qemu/build/Debug/outDebug",
+      "MIMode": "gdb",
+      "miDebuggerPath": "gdb",
+      "setupCommands": [
+        {
+          "description": "Enable pretty-printing for gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ]
+    }
+  ]
+}
