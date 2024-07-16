@@ -436,9 +436,14 @@ softmmu/main.c -> main -> qemu_init(argc, argv);
                                             vhost_user_start
                                                 options.backend_type = VHOST_BACKEND_TYPE_USER -> 目前共3种vhost后端类型 VhostBackendType (kernel, user, vdpa)
                                                 net = vhost_net_init(&options)
+                                                    bool backend_kernel = options->backend_type == VHOST_BACKEND_TYPE_KERNEL
+                                                    if (backend_kernel)
+                                                        vhost_net_get_fd(options->net_backend)
                                                     vhost_dev_init -> 该函数创建并初始化一个vhost_net，每个vhost_net对应1个vhost_dev,2个vhost_virtqueue
                                                     vhost_user_get_acked_features
                                                     vhost_net_ack_features
+                                                        vhost_ack_features(&net->dev, vhost_net_get_feature_bits(net), features)
+                                                            hdev->acked_features |= bit_mask
         object_option_foreach_add(object_create_late)
         qemu_semihosting_chardev_init
     qemu_main_loop
@@ -491,25 +496,18 @@ lspci -> read stack -> edu_cfg_read
     pci_default_read_config
 (gdb) bt
 #0  edu_cfg_read (pci_dev=0x7f2bb4a4f010, address=0, len=4) at ../hw/misc/myedu.c:1558
-#1  0x000055a6cc5fdb9d in pci_host_config_read_common (pci_dev=0x7f2bb4a4f010, addr=addr@entry=0, limit=<optimized out>, limit@entry=256, len=len@entry=4)
-    at ../hw/pci/pci_host.c:107
+#1  0x000055a6cc5fdb9d in pci_host_config_read_common (pci_dev=0x7f2bb4a4f010, addr=addr@entry=0, limit=<optimized out>, limit@entry=256, len=len@entry=4) at ../hw/pci/pci_host.c:107
 #2  0x000055a6cc5fdefe in pci_data_read (s=<optimized out>, addr=2147493888, len=4) at ../hw/pci/pci_host.c:143
 #3  0x000055a6cc5fe013 in pci_host_data_read (opaque=<optimized out>, addr=<optimized out>, len=<optimized out>) at ../hw/pci/pci_host.c:188
-#4  0x000055a6cc830611 in memory_region_read_accessor
-    (mr=mr@entry=0x55a6ce496740, addr=0, value=value@entry=0x7f2bb5e986f0, size=size@entry=4, shift=0, mask=mask@entry=4294967295, attrs=...) at ../softmmu/memory.c:441
-#5  0x000055a6cc83098e in access_with_adjusted_size
-    (addr=addr@entry=0, value=value@entry=0x7f2bb5e986f0, size=size@entry=4, access_size_min=<optimized out>, access_size_max=<optimized out>, access_fn=
-    0x55a6cc8305d0 <memory_region_read_accessor>, mr=0x55a6ce496740, attrs=...) at ../softmmu/memory.c:569
+#4  0x000055a6cc830611 in memory_region_read_accessor(mr=mr@entry=0x55a6ce496740, addr=0, value=value@entry=0x7f2bb5e986f0, size=size@entry=4, shift=0, mask=mask@entry=4294967295, attrs=...) at ../softmmu/memory.c:441
+#5  0x000055a6cc83098e in access_with_adjusted_size(addr=addr@entry=0, value=value@entry=0x7f2bb5e986f0, size=size@entry=4, access_size_min=<optimized out>, access_size_max=<optimized out>, access_fn= 0x55a6cc8305d0 <memory_region_read_accessor>, mr=0x55a6ce496740, attrs=...) at ../softmmu/memory.c:569
 #6  0x000055a6cc830b61 in memory_region_dispatch_read1 (attrs=..., size=4, pval=0x7f2bb5e986f0, addr=<optimized out>, mr=<optimized out>) at ../softmmu/memory.c:1443
 #7  memory_region_dispatch_read (mr=mr@entry=0x55a6ce496740, addr=<optimized out>, pval=pval@entry=0x7f2bb5e986f0, op=MO_32, attrs=attrs@entry=...) at ../softmmu/memory.c:1476
-#8  0x000055a6cc83ad23 in flatview_read_continue
-    (fv=fv@entry=0x7f2bac435dc0, addr=addr@entry=3324, attrs=..., ptr=ptr@entry=0x7f2bb9346000, len=len@entry=4, addr1=<optimized out>, l=<optimized out>, mr=0x55a6ce496740)
+#8  0x000055a6cc83ad23 in flatview_read_continue (fv=fv@entry=0x7f2bac435dc0, addr=addr@entry=3324, attrs=..., ptr=ptr@entry=0x7f2bb9346000, len=len@entry=4, addr1=<optimized out>, l=<optimized out>, mr=0x55a6ce496740)
     at /home/xb/project/virt/qemu/include/qemu/host-utils.h:219
-#9  0x000055a6cc83aed7 in flatview_read (fv=0x7f2bac435dc0, addr=addr@entry=3324, attrs=attrs@entry=..., buf=buf@entry=0x7f2bb9346000, len=len@entry=4)
-    at ../softmmu/physmem.c:2762
+#9  0x000055a6cc83aed7 in flatview_read (fv=0x7f2bac435dc0, addr=addr@entry=3324, attrs=attrs@entry=..., buf=buf@entry=0x7f2bb9346000, len=len@entry=4) at ../softmmu/physmem.c:2762
 #10 0x000055a6cc83b038 in address_space_read_full (as=0x55a6cd30d3c0 <address_space_io>, addr=3324, attrs=..., buf=0x7f2bb9346000, len=4) at ../softmmu/physmem.c:2775
-#11 0x000055a6cc83b185 in address_space_rw (as=as@entry=0x55a6cd30d3c0 <address_space_io>, addr=addr@entry=3324, attrs=..., 
-    attrs@entry=..., buf=<optimized out>, len=len@entry=4, is_write=is_write@entry=false) at ../softmmu/physmem.c:2803
+#11 0x000055a6cc83b185 in address_space_rw (as=as@entry=0x55a6cd30d3c0 <address_space_io>, addr=addr@entry=3324, attrs=..., attrs@entry=..., buf=<optimized out>, len=len@entry=4, is_write=is_write@entry=false) at ../softmmu/physmem.c:2803
 #12 0x000055a6cc88739f in kvm_handle_io (count=1, size=4, direction=<optimized out>, data=<optimized out>, attrs=..., port=3324) at ../accel/kvm/kvm-all.c:2778
 #13 kvm_cpu_exec (cpu=cpu@entry=0x55a6ce4584e0) at ../accel/kvm/kvm-all.c:3029
 #14 0x000055a6cc888585 in kvm_vcpu_thread_fn (arg=arg@entry=0x55a6ce4584e0) at ../accel/kvm/kvm-accel-ops.c:51
@@ -800,19 +798,15 @@ qemu-system-x86_64 -machine accel=kvm -vnc :0 -smp 4 -m 4096M \
 0  1  2  3
 
 
+KVM_EXIT_MMIO
 static const MemoryRegionOps virtio_pci_config_ops = {
     .read = virtio_pci_config_read,
     .write = virtio_pci_config_write,
-    .impl = {
-        .min_access_size = 1,
-        .max_access_size = 4,
-    },
-    .endianness = DEVICE_LITTLE_ENDIAN,
 };
 
-# 前端驱动写Status位，val & VIRTIO_CONFIG_S_DRIVER_OK, 这时候前端驱动已经ready
+# 前端驱动写 Status 位，val & VIRTIO_CONFIG_S_DRIVER_OK, 这时候前端驱动已经 ready
 然后QEMU/KVM后端的处理流程如下：
-virtio_pci_config_write  --> virtio_ioport_write --> virtio_pci_start_ioeventfd
+virtio_pci_config_write  --> virtio_ioport_write --> virtio_pci_start_ioeventfd -> virtio_bus_start_ioeventfd
 --> virtio_bus_set_host_notifier --> virtio_bus_start_ioeventfd --> virtio_device_start_ioeventfd_impl
 --> virtio_bus_set_host_notifier
     --> virtio_pci_ioeventfd_assign
@@ -825,6 +819,11 @@ virtio_pci_config_write  --> virtio_ioport_write --> virtio_pci_start_ioeventfd
                       --> kvm_vm_ioctl(kvm_state, KVM_IOEVENTFD, &kick)
 
 
+virtio_device_start_ioeventfd_impl
+    event_notifier_set_handler(&vq->host_notifier, virtio_queue_host_notifier_read)
+        iohandler_init()
+        aio_set_event_notifier(iohandler_ctx, e, handler, NULL, NULL)
+
 virtio_pci_device_plugged -> 在qemu中，对PCI总线添加一个设备的时候，会调用该函数
     ...
     virtio_pci_legacy
@@ -836,7 +835,6 @@ virtio_pci_device_plugged -> 在qemu中，对PCI总线添加一个设备的时�
 
 
 在QEMU/KVM这一侧，开始模拟MSIx中断，具体流程大致如下：
-
 virtio_pci_config_write
   --> virtio_ioport_write
     --> virtio_set_status
@@ -991,6 +989,8 @@ virtio_blk_class_init
     vdc->save = virtio_blk_save_device;
     vdc->load = virtio_blk_load_device;
     vdc->start_ioeventfd = virtio_blk_data_plane_start;
+        k->set_guest_notifiers(qbus->parent, nvqs, true)
+        virtio_bus_set_host_notifier
     vdc->stop_ioeventfd = virtio_blk_data_plane_stop;
 
 
@@ -1025,6 +1025,15 @@ virtio_net_add_queue
 virtio_ioport_write
     case VIRTIO_PCI_QUEUE_PFN
         virtio_queue_set_addr(vdev, vdev->queue_sel, pa)
+            vdev->vq[n].vring.desc = addr
+            virtio_queue_update_rings(vdev, n)
+                vring->avail = vring->desc + vring->num * sizeof(VRingDesc)
+                vring->used = vring_align(vring->avail + offsetof(VRingAvail, ring[vring->num]), vring->align)
+                virtio_init_region_cache(vdev, n)
+                    addr = vq->vring.desc
+                    size = virtio_queue_get_avail_size(vdev, n)
+                        offsetof(VRingAvail, ring) + sizeof(uint16_t) * vdev->vq[n].vring.num + s
+                    len = address_space_cache_init(&new->avail, vdev->dma_as, vq->vring.avail, size, false)
 
 
 
@@ -1064,7 +1073,7 @@ virtio_queue_notify 会调用VirtQueue的 handle_output 函数，前面已经设
                         or address_space_read_cached_slow
                     virtio_tswap64s(vdev, &desc->addr) -> virtio：用于字节序矛盾目标的内存访问器，这是从 Rusty 的“使用旧版 virtio 的字节序矛盾目标”补丁中获取的 virtio-access.h 头文件。它引入了访问 vring 数据时或驱动程序访问包含头的数据时应使用的帮助程序。virtio 配置空间也是目标字节序，但当前代码已经使用 virtio_is_big_endian() 帮助程序处理了这个问题。在这种情况下使用 virtio 访问器没有明显的好处。现在我们有两条不同的路径：一条是用于固定字节序目标的快速内联路径，另一条是用于定义新 TARGET_IS_BIENDIAN 宏的目标的慢速外联路径
                 address_space_cache_init -> 准备重复访问物理内存区域
-                map_ok = virtqueue_map_desc(vdev, &in_num, addr + out_num, iov + out_num, VIRTQUEUE_MAX_SIZE - out_num, true, desc.addr, desc.len)
+                map_ok = virtqueue_map_desc(vdev, &in_num, addr + out_num, iov + out_num, VIRTQUEUE_MAX_SIZE - out_num, true, desc.addr, desc.len) -> gpa -> hva
                     iov[num_sg].iov_base = dma_memory_map -> Map a physical memory region into a host virtual address
                         p = address_space_map
                 virtqueue_packed_read_next_desc
@@ -1108,25 +1117,85 @@ virtio_queue_notify 会调用VirtQueue的 handle_output 函数，前面已经设
 
 
 
-virtio_blk_rw_complete
-    virtio_blk_rw_complete
+static void virtio_blk_rw_complete(void *opaque, int ret)
+    virtio_blk_req_complete(req, VIRTIO_BLK_S_OK)
         virtqueue_push(req->vq, &req->elem, req->in_len)
+            virtqueue_fill(vq, elem, len, 0)
+                virtqueue_packed_fill(vq, elem, len, idx)
+                    vq->used_elems[idx].index = elem->index;
+                    vq->used_elems[idx].len = len;
+                    vq->used_elems[idx].ndescs = elem->ndescs;
+                or virtqueue_split_fill(vq, elem, len, idx)
+                    vring_used_write(vq, &uelem, idx)
+                        virtio_tswap32s(vq->vdev, &uelem->id);
+                        virtio_tswap32s(vq->vdev, &uelem->len);
+                        address_space_write_cached(&caches->used, pa, uelem, sizeof(VRingUsedElem));
+                        address_space_cache_invalidate(&caches->used, pa, sizeof(VRingUsedElem));
+            virtqueue_flush(vq, 1)
+                virtqueue_packed_flush(vq, count)
+                    for (i = 1; i < count; i++)
+                        virtqueue_packed_fill_desc(vq, &vq->used_elems[i], i, false)
+                            if (wrap_counter) {
+                                desc.flags |= (1 << VRING_PACKED_DESC_F_AVAIL);
+                                desc.flags |= (1 << VRING_PACKED_DESC_F_USED);
+                            } else {
+                                desc.flags &= ~(1 << VRING_PACKED_DESC_F_AVAIL);
+                                desc.flags &= ~(1 << VRING_PACKED_DESC_F_USED);
+                            }
+                            caches = vring_get_region_caches(vq)
+                                qatomic_rcu_read(&vq->vring.caches)
+                            vring_packed_desc_write
+                                vring_packed_desc_write_data(vdev, desc, cache, i)
+                    virtqueue_packed_fill_desc(vq, &vq->used_elems[0], 0, true)
+                        virtio_tswap32s(vdev, &desc->len);
+                        virtio_tswap16s(vdev, &desc->id);
+                        address_space_write_cached(cache, off_id, &desc->id, sizeof(desc->id));
+                        address_space_cache_invalidate(cache, off_id, sizeof(desc->id));
+                        address_space_write_cached(cache, off_len, &desc->len, sizeof(desc->len));
+                        address_space_cache_invalidate(cache, off_len, sizeof(desc->len));
+                    vring_packed_desc_write_flags(vdev, desc, cache, i)
+                        virtio_stw_phys_cached(vdev, cache, off, desc->flags);
+                            stw_be_phys_cached
+                            or stw_le_phys_cached
+                        address_space_cache_invalidate(cache, off, sizeof(desc->flags))
+                            invalidate_and_set_dirty(cache->mrs.mr, addr + cache->xlat, access_len)
+                    ndescs += vq->used_elems[0].ndescs
+                    vq->inuse -= ndescs
+                    vq->used_idx += ndescs
+                or virtqueue_split_flush(vq, count)
         virtio_blk_data_plane_notify
             virtio_notify_irqfd(s->vdev, vq)
                 virtio_set_isr(vq->vdev, 0x1)
                 defer_call(virtio_notify_irqfd_deferred_fn, &vq->guest_notifier)
-                    event_notifier_set(notifier) -> ret = write(e->wfd, &value, sizeof(value))
+                    event_notifier_set(notifier) -> ret = write(e->wfd, &value, sizeof(value)) -> write 1 -> trigger kernel -> vhost_poll_start -> vfs_poll(file, &poll->table) -> file->f_op->poll(file, pt) -> handle_vq_kick
         or virtio_notify(vdev, req->vq)
             virtio_irq(vq)
                 virtio_set_isr(vq->vdev, 0x1)
                 virtio_notify_vector(vq->vdev, vq->vector)
-                    k->notify(qbus->parent, vector)
+                    VirtioBusClass *k = VIRTIO_BUS_GET_CLASS(qbus)
+                    k->notify(qbus->parent, vector) -> virtio_pci_notify
 
 blk_aio_write_entry
     blk_co_do_pwritev_part
         throttle_group_co_io_limits_intercept
             schedule_next_request(tgm, direction)
         bdrv_co_pwritev_part
+            bdrv_co_is_inserted(bs)
+            bdrv_pad_request
+            bdrv_make_request_serialising
+            bdrv_padding_rmw_read
+            bdrv_aligned_pwritev
+                bdrv_co_write_req_prepare
+                bdrv_driver_pwritev
+                    bdrv_check_qiov_request
+                    drv->bdrv_co_pwritev_part(bs, offset, bytes, qiov, qiov_offset,flags)
+                    or
+                    drv->bdrv_co_pwritev(bs, offset, bytes, qiov, flags)
+                    or
+                    acb = drv->bdrv_aio_pwritev(bs, offset, bytes, qiov, flags, bdrv_co_io_em_complete, &co)
+                    drv->bdrv_co_writev(bs, sector_num, nb_sectors, qiov, flags)
+                bdrv_co_write_req_finish
+            bdrv_padding_finalize
         bdrv_dec_in_flight(bs)
             bdrv_wakeup(bs)
     blk_aio_complete
@@ -1191,6 +1260,17 @@ typedef struct VhostOps
 const VhostOps vdpa_ops = {
         .backend_type = VHOST_BACKEND_TYPE_VDPA,
         .vhost_backend_init = vhost_vdpa_init,
+            v->shared->listener = vhost_vdpa_memory_listener
+                static const MemoryListener vhost_vdpa_memory_listener = {
+                    .name = "vhost-vdpa",
+                    .commit = vhost_vdpa_listener_commit,
+                    .region_add = vhost_vdpa_listener_region_add,
+                    .region_del = vhost_vdpa_listener_region_del,
+                };
+            vhost_vdpa_init_svq(dev, v)
+            vhost_vdpa_get_dev_features(dev, &features) -> vhost_vdpa_call(dev, VHOST_GET_FEATURES, features)
+            ram_block_discard_disable(true)
+            vhost_vdpa_add_status(dev, VIRTIO_CONFIG_S_ACKNOWLEDGE | VIRTIO_CONFIG_S_DRIVER) -> vhost_vdpa_call(dev, VHOST_VDPA_SET_STATUS, &s)
         .vhost_backend_cleanup = vhost_vdpa_cleanup,
         .vhost_set_log_base = vhost_vdpa_set_log_base,
         .vhost_set_vring_addr = vhost_vdpa_set_vring_addr, -> vhost_vdpa_set_vring_dev_addr -> vhost_vdpa_call(dev, VHOST_SET_VRING_ADDR, addr)
@@ -1198,6 +1278,9 @@ const VhostOps vdpa_ops = {
         .vhost_set_vring_base = vhost_vdpa_set_vring_base,
         .vhost_get_vring_base = vhost_vdpa_get_vring_base,
         .vhost_set_vring_kick = vhost_vdpa_set_vring_kick,
+            vhost_svq_set_svq_kick_fd(svq, file->fd)
+            or vhost_vdpa_set_vring_dev_kick(dev, file)
+                vhost_vdpa_call(dev, VHOST_SET_VRING_KICK, file)
         .vhost_set_vring_call = vhost_vdpa_set_vring_call,
         .vhost_get_features = vhost_vdpa_get_features,
         .vhost_set_backend_cap = vhost_vdpa_set_backend_cap,
@@ -1205,11 +1288,20 @@ const VhostOps vdpa_ops = {
         .vhost_set_vring_endian = NULL,
         .vhost_backend_memslots_limit = vhost_vdpa_memslots_limit,
         .vhost_set_mem_table = vhost_vdpa_set_mem_table,
+            trace_vhost_vdpa_set_mem_table(dev, mem->nregions, mem->padding)
+            trace_event_get_state_backends(TRACE_VHOST_VDPA_SET_MEM_TABLE)
+            trace_vhost_vdpa_dump_regions(dev, i,
+                                          mem->regions[i].guest_phys_addr,
+                                          mem->regions[i].memory_size,
+                                          mem->regions[i].userspace_addr,
+                                          mem->regions[i].flags_padding)
         .vhost_set_features = vhost_vdpa_set_features,
         .vhost_reset_device = vhost_vdpa_reset_device,
         .vhost_get_vq_index = vhost_vdpa_get_vq_index,
         .vhost_get_config  = vhost_vdpa_get_config,
-        .vhost_set_config = vhost_vdpa_set_config,
+            vhost_vdpa_call(dev, VHOST_VDPA_GET_CONFIG, v_config)
+            memcpy(config, v_config->buf, config_len)
+        .vhost_set_config = vhost_vdpa_set_config, -> vhost_vdpa_call(dev, VHOST_VDPA_SET_CONFIG, config)
         .vhost_requires_shm_log = NULL,
         .vhost_migration_done = NULL,
         .vhost_net_set_mtu = NULL,
@@ -1220,6 +1312,7 @@ const VhostOps vdpa_ops = {
             vhost_vdpa_svqs_start
             vhost_vdpa_add_status(dev, VIRTIO_CONFIG_S_DRIVER_OK) -> 前端驱动操作完成，启动virtio设备数据面操作
         .vhost_get_device_id = vhost_vdpa_get_device_id,
+            vhost_vdpa_call(dev, VHOST_VDPA_GET_DEVICE_ID, device_id)
         .vhost_vq_get_addr = vhost_vdpa_vq_get_addr,
         .vhost_force_iommu = vhost_vdpa_force_iommu,
         .vhost_set_config_call = vhost_vdpa_set_config_call,
@@ -1295,8 +1388,16 @@ const VhostOps user_ops = {
         .vhost_backend_cleanup = vhost_user_backend_cleanup,
         .vhost_backend_memslots_limit = vhost_user_memslots_limit,
         .vhost_backend_no_private_memslots = vhost_user_no_private_memslots,
+            return true
         .vhost_set_log_base = vhost_user_set_log_base,
         .vhost_set_mem_table = vhost_user_set_mem_table,
+            vhost_user_set_mem_table_postcopy(dev, mem, reply_supported, config_mem_slots)
+            vhost_user_add_remove_regions(dev, &msg, reply_supported, false)
+            or vhost_user_fill_set_mem_table_msg(u, dev, &msg, fds, &fd_num, false)
+                mr = vhost_user_get_mr_data(reg->userspace_addr, &offset, &fd)
+                reg->guest_phys_addr
+                vhost_user_fill_msg_region(&region_buffer, reg, offset)
+            vhost_user_write(dev, &msg, fds, fd_num)
         .vhost_set_vring_addr = vhost_user_set_vring_addr,
             .hdr.request = VHOST_USER_SET_VRING_ADDR
             vhost_user_write_sync(dev, &msg, wait_for_reply)
@@ -1324,6 +1425,7 @@ const VhostOps user_ops = {
         .vhost_send_device_iotlb_msg = vhost_user_send_device_iotlb_msg,
         .vhost_get_config = vhost_user_get_config,
         .vhost_set_config = vhost_user_set_config,
+            .hdr.request = VHOST_USER_SET_CONFIG
         .vhost_crypto_create_session = vhost_user_crypto_create_session,
         .vhost_crypto_close_session = vhost_user_crypto_close_session,
         .vhost_get_inflight_fd = vhost_user_get_inflight_fd,
@@ -1396,7 +1498,19 @@ vhost_scsi_realize
             .name = "vhost",
             .begin = vhost_begin,
             .commit = vhost_commit,
+                dev->vhost_ops->vhost_backend_no_private_memslots(dev))
+                for (i = 0; i < dev->mem->nregions; i++)
+                    vhost_verify_ring_mappings(dev, (void *)(uintptr_t)dev->mem->regions[i].userspace_addr, dev->mem->regions[i].guest_phys_addr, dev->mem->regions[i].memory_size)
+                        vhost_dev_has_iommu(dev)
+                        vhost_verify_ring_part_mapping(vq->desc, vq->desc_phys, vq->desc_size, reg_hva, reg_gpa, reg_size)
+                        vhost_verify_ring_part_mapping(vq->avail, vq->avail_phys, vq->avail_size, reg_hva, reg_gpa, reg_size)
+                        vhost_verify_ring_part_mapping(vq->used, vq->used_phys, vq->used_size, reg_hva, reg_gpa, reg_size)
+                dev->vhost_ops->vhost_set_mem_table(dev, dev->mem)
             .region_add = vhost_region_addnop,
+                vhost_section(dev, section) -> vhost_section：识别 vhost 访问所需的部分，我们只关心这里的 RAM 部分（virtqueue 和 virtio 访问的客户内部可能位于其中）。
+                    if (memory_region_is_ram(mr) && !memory_region_is_rom(mr))
+                        vhost_backend_no_private_memslots
+                vhost_region_add_section(dev, section) -> 将部分数据添加到 tmp_section 结构。它依赖于侦听器按内存地址顺序调用我们，并针对每个区域（通过 _add 和 _nop 方法）加入邻居
             .region_nop = vhost_region_addnop,
             .log_start = vhost_log_start,
             .log_stop = vhost_log_stop,
@@ -1474,6 +1588,14 @@ static const VirtioPCIDeviceTypeInfo vhost_user_blk_pci_info = {
     .non_transitional_name   = "vhost-user-blk-pci-non-transitional",
     .instance_size  = sizeof(VHostUserBlkPCI),
     .instance_init  = vhost_user_blk_pci_instance_init,
+        VHostUserBlkPCI *dev = VHOST_USER_BLK_PCI(obj)
+        virtio_instance_init_common(obj, &dev->vdev, sizeof(dev->vdev), TYPE_VHOST_USER_BLK)
+             object_initialize_child_with_props(proxy_obj, "virtio-backend", vdev, vdev_size, vdev_name, &error_abort, NULL) -> 此函数将初始化一个对象。该对象的内存应该已经分配。然后，将使用 object_property_add_child() 函数将该对象作为子属性添加到父级。返回的对象具有 1 的引用计数（对于父级的“child<...>”属性），因此当父级被删除时，该对象将自动完成。可变参数是 (propname, propvalue) 字符串对的列表。%NULL 的 propname 表示属性列表的结尾。如果对象实现了用户可创建接口，则一旦处理完所有属性，该对象将被标记为完成
+             qdev_alias_all_properties(vdev, proxy_obj)
+                class = object_get_class(OBJECT(target))
+                object_class_property_iter_init(&iter, class)
+                object_property_add_alias(source, prop->name, OBJECT(target), prop->name)
+        object_property_add_alias(obj, "bootindex", OBJECT(&dev->vdev), "bootindex")
     .class_init     = vhost_user_blk_pci_class_init,
         k->realize = vhost_user_blk_pci_realize
             VHostUserBlkPCI *dev = VHOST_USER_BLK_PCI(vpci_dev)
@@ -1482,12 +1604,6 @@ static const VirtioPCIDeviceTypeInfo vhost_user_blk_pci_info = {
 };
 
 
-
-vhost_user_backend_start
-    vhost_dev_start
-        hdev->vhost_ops->vhost_set_mem_table(hdev, hdev->mem)
-        vhost_virtqueue_start(struct vhost_dev *dev, struct VirtIODevice *vdev, struct vhost_virtqueue *vq, unsigned idx)
-            dev->vhost_ops->vhost_set_vring_kick(dev, &file)
 
 
 
@@ -1669,6 +1785,7 @@ qemu_init
                                                             ...
                                                         vhost_user_blk_connect(dev, errp)
                                                             vhost_dev_set_config_notifier(&s->dev, &blk_ops) -> support VHOST_USER_GET_INFLIGHT_FD and VHOST_USER_SET_INFLIGHT_FD
+                                                                vhost_user_blk_handle_config_change
                                                             vhost_dev_init(&s->dev, &s->vhost_user, VHOST_BACKEND_TYPE_USER, 0, errp)
                                                                 vhost_set_backend_type(hdev, backend_type)
                                                                 hdev->vhost_ops->vhost_backend_init(hdev, opaque, errp)
@@ -1676,8 +1793,21 @@ qemu_init
                                                                 virtio_device_started(vdev, vdev->status) -> for migration
                                                                     status & VIRTIO_CONFIG_S_DRIVER_OK
                                                                     vhost_user_blk_start(vdev, errp)
-                                                                        vhost_dev_enable_notifiers
-                                                                        k->set_guest_notifiers(qbus->parent, s->dev.nvqs, true)
+                                                                        vhost_dev_enable_notifiers(&s->dev, vdev)
+                                                                            virtio_device_grab_ioeventfd(vdev) > virtio_bus_grab_ioeventfd(vbus)
+                                                                                virtio_bus_stop_ioeventfd(bus)
+                                                                                    vdc->stop_ioeventfd(vdev)
+                                                                            memory_region_transaction_begin() -> qemu_flush_coalesced_mmio_buffer()
+                                                                            for (i = 0; i < hdev->nvqs; ++i)
+                                                                                virtio_bus_set_host_notifier(VIRTIO_BUS(qbus), hdev->vq_index + i, true)
+                                                                                    EventNotifier *notifier = virtio_queue_get_host_notifier(vq)
+                                                                                    event_notifier_init(notifier, 1)
+                                                                                        eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC)
+                                                                                        event_notifier_set(e) -> write(e->wfd, &value, sizeof(value)) -> write 1
+                                                                                    k->ioeventfd_assign(proxy, notifier, n, true)
+                                                                                    virtio_queue_set_host_notifier_enabled(vq, assign) -> vq->host_notifier_enabled = enabled
+                                                                                memory_region_transaction_commit()
+                                                                        set_guest_notifiers
                                                                         vhost_dev_prepare_inflight
                                                                             vhost_dev_set_features(hdev, hdev->log_enabled)
                                                                                 features |= 0x1ULL << VHOST_F_LOG_ALL
@@ -1698,7 +1828,9 @@ qemu_init
                                                                             for (i = 0; i < hdev->nvqs; ++i)
                                                                                 vhost_virtqueue_start(hdev, vdev, hdev->vqs + i, hdev->vq_index + i)
                                                                                     int vhost_vq_index = dev->vhost_ops->vhost_get_vq_index(dev, idx)
+                                                                                        assert(idx >= dev->vq_index && idx < dev->vq_index + dev->nvqs)
                                                                                     a = virtio_queue_get_desc_addr(vdev, idx)
+                                                                                    dev->vhost_ops->vhost_set_vring_base(dev, &state)
                                                                                     dev->vhost_ops->vhost_set_vring_num(dev, &state)
                                                                                     virtio_queue_get_last_avail_idx
                                                                                     vhost_virtqueue_set_vring_endian_legacy
@@ -1832,9 +1964,9 @@ const VhostOps kernel_ops = {
         .vhost_set_vring_addr = vhost_kernel_set_vring_addr, -> vhost_kernel_call(dev, VHOST_SET_VRING_ADDR, addr)
         .vhost_set_vring_endian = vhost_kernel_set_vring_endian,
         .vhost_set_vring_num = vhost_kernel_set_vring_num,
-        .vhost_set_vring_base = vhost_kernel_set_vring_base,
+        .vhost_set_vring_base = vhost_kernel_set_vring_base, -> vhost_kernel_call(dev, VHOST_SET_VRING_BASE, ring)
         .vhost_get_vring_base = vhost_kernel_get_vring_base,
-        .vhost_set_vring_kick = vhost_kernel_set_vring_kick,
+        .vhost_set_vring_kick = vhost_kernel_set_vring_kick, -> vhost_kernel_call(dev, VHOST_SET_VRING_KICK, file)
         .vhost_set_vring_call = vhost_kernel_set_vring_call,
         .vhost_set_vring_err = vhost_kernel_set_vring_err,
         .vhost_set_vring_busyloop_timeout = vhost_kernel_set_vring_busyloop_timeout,
@@ -1965,7 +2097,16 @@ BlockDriver bdrv_qcow2 = {
     .bdrv_co_pwritev         = blkio_co_pwritev, \
         if (use_bounce_buffer)
             blkio_alloc_bounce_buffer
+                blkio_do_alloc_bounce_buffer
+                    bounce->buf.iov_base = addr
+                    bounce->buf.iov_len = bytes
+                qemu_co_queue_next(&s->bounce_available)
+                blkio_resize_bounce_pool
+                ok = blkio_do_alloc_bounce_buffer(s, bounce, bytes)
             qemu_iovec_to_buf
+                iov_to_buf(qiov->iov, qiov->niov, offset, buf, bytes)
+            blkio_submit_io(bs)
+            qemu_coroutine_yield()
         blkioq_writev(s->blkioq, offset, iov, iovcnt, &cod, blkio_flags) -> blkio：添加 libblkio 块驱动程序，libblkio (https://gitlab.com/libblkio/libblkio/\) 是一个高性能磁盘 I/O 库。它目前支持 io_uring、virtio-blk-vhost-user 和 virtio-blk-vhost-vdpa，其他驱动程序正在开发中。开发 libblkio 的原因之一是 QEMU 以外的其他应用程序也可以使用它。这对于 virtio-blk-vhost-user 特别有用，应用程序可能希望使用它来连接到 qemu-storage-daemon。libblkio 还为我们提供了一个机会，让我们可以在 C API 后面使用 Rust 进行开发，该 API 易于从 QEMU 使用。此提交使用 libblkio 将 io_uring、nvme-io_uring、virtio-blk-vhost-user 和 virtio-blk-vhost-vdpa BlockDrivers 添加到 QEMU。添加其他 libblkio 驱动程序将很容易，因为它们将共享大部分代码。目前，如果 libblkio 驱动程序需要，则通过反弹缓冲区复制 I/O 缓冲区。后续提交添加了预注册客户 RAM 的优化，以避免反弹缓冲区 -> https://libblkio.gitlab.io/libblkio/blkio.html
             q.writev(start, iovec, iovcnt as u32, user_data as usize, flags) -> queue_request_full -> libblkio, rust
                 let desc_idx = self.vq.add_request(|req, add_desc|
@@ -2027,7 +2168,7 @@ blkioq_writev
         Ok(())
 
 ...
-blkioq_do_io
+blkioq_do_io -> vhost-user-blk: a fast userspace block I/O interface
     handling_result_with_value
     completions_to_slice
     do_io -> blkio/src/drivers/virtio_blk.rs
@@ -2067,7 +2208,7 @@ virtio_pci_device_plugged
             .read = virtio_pci_notify_read,
             .write = virtio_pci_notify_write,
                 virtio_queue_notify(vdev, queue)
-                    if (vq->host_notifier_enabled)
+                    if (vq->host_notifier_enabled) -> virtio：当可用时通过主机通知程序通知 virtqueue，主机通知程序用于以下几种情况：1. 传统 ioeventfd，其中 virtqueue 通知在主循环线程中处理。2. IOThreads (aio_handle_output)，其中 virtqueue 通知在 IOThread AioContext 中处理。3. vhost，其中 virtqueue 通知由内核 vhost 或 vhost-user 设备后端处理。来自客户机的大多数 virtqueue 通知使用 ioeventfd 机制，但存在 QEMU 代码调用 virtio_queue_notify() 的极端情况。这目前适用于 IOThreads aio_handle_output 情况的主机通知程序，但不适用于 vhost 情况。结果是，当调用 virtio_queue_notify() 时，vhost 不会从 QEMU 接收 virtqueue 通知。此补丁扩展了 virtio_queue_notify()，以便在启用主机通知程序时设置它，而不是直接调用 vq->(aio_)handle_output() 函数。我们分别跟踪每个 virtqueue 的主机通知程序状态，因为某些设备可能仅将其用于某些 virtqueue。这修复了 vhost 情况，尽管它确实为传统 ioeventfd 情况增加了通过 eventfd 的行程。我认为不值得为传统 ioeventfd 情况添加快速路径，因为在启用 ioeventfd 时很少调用 virtio_queue_notify()
                         event_notifier_set(&vq->host_notifier)
                     else vq->handle_output(vdev, vq)
                     virtio_set_started(vdev, true)
@@ -2077,6 +2218,9 @@ virtio_pci_device_plugged
             .write = virtio_pci_notify_write_pio,
         };
         memory_region_init_io
+        memory_region_init_io(&proxy->notify.mr, OBJECT(proxy), &notify_ops, proxy,name->str,proxy->notify.size)
+            memory_region_init(mr, owner, name, size)
+            mr->ops = ops ? ops : &unassigned_mem_ops
     virtio_pci_modern_mem_region_map(proxy, &proxy->device, &cap)
     memory_region_init(&proxy->io_bar, OBJECT(proxy), "virtio-pci-io", 0x4)
     pci_register_bar(&proxy->pci_dev, proxy->modern_io_bar_idx, PCI_BASE_ADDRESS_SPACE_IO, &proxy->io_bar)
@@ -2091,6 +2235,10 @@ static void virtio_pci_bus_class_init(ObjectClass *klass, void *data)
     VirtioBusClass *k = VIRTIO_BUS_CLASS(klass);
     bus_class->max_dev = 1;
     k->notify = virtio_pci_notify;
+        msix_notify(&proxy->pci_dev, vector) -> trigger interrupt to vm(kernel) -> vp_interrupt
+            msg = msix_get_message(dev, vector) -> dev->msix_prepare_message(dev, vector)
+            msi_send_message(dev, msg) -> dev->msi_trigger(dev, msg)
+        or pci_set_irq(&proxy->pci_dev, qatomic_read(&vdev->isr) & 1)
     k->save_config = virtio_pci_save_config;
     k->load_config = virtio_pci_load_config;
     k->save_queue = virtio_pci_save_queue;
@@ -2100,6 +2248,25 @@ static void virtio_pci_bus_class_init(ObjectClass *klass, void *data)
     k->has_extra_state = virtio_pci_has_extra_state;
     k->query_guest_notifiers = virtio_pci_query_guest_notifiers;
     k->set_guest_notifiers = virtio_pci_set_guest_notifiers;
+        bool with_irqfd = msix_enabled(&proxy->pci_dev) && kvm_msi_via_irqfd_enabled()
+        msix_unset_vector_notifiers(&proxy->pci_dev)
+        virtio_pci_set_guest_notifier(d, n, assign, with_irqfd)
+            notifier = virtio_config_get_guest_notifier(vdev)
+            or notifier = virtio_queue_get_guest_notifier(vq)
+            virtio_pci_set_guest_notifier_fd_handler(vdev, vq, n, true, with_irqfd)
+                event_notifier_set_handler(&vq->guest_notifier, virtio_queue_guest_notifier_read)
+                    virtio_irq(vq)
+        virtio_pci_set_guest_notifier(d, VIRTIO_CONFIG_IRQ_IDX, assign, with_irqfd)
+        proxy->vector_irqfd = g_malloc0(sizeof(*proxy->vector_irqfd) * msix_nr_vectors_allocated(&proxy->pci_dev))
+        kvm_virtio_pci_vector_vq_use(proxy, nvqs)
+            kvm_virtio_pci_vector_use_one(proxy, queue_no)
+                virtio_pci_get_notifier(proxy, queue_no, &n, &vector)
+                    virtio_queue_get_guest_notifier
+                msix_nr_vectors_allocated(dev)
+                kvm_virtio_pci_vq_vector_use(proxy, vector)
+                kvm_virtio_pci_irqfd_use(proxy, n, vector)
+        kvm_virtio_pci_vector_config_use(proxy)
+        msix_set_vector_notifiers(&proxy->pci_dev, virtio_pci_vector_unmask, virtio_pci_vector_mask, virtio_pci_vector_poll)
     k->set_host_notifier_mr = virtio_pci_set_host_notifier_mr;
     k->vmstate_change = virtio_pci_vmstate_change;
     k->pre_plugged = virtio_pci_pre_plugged;
@@ -2108,11 +2275,184 @@ static void virtio_pci_bus_class_init(ObjectClass *klass, void *data)
     k->query_nvectors = virtio_pci_query_nvectors;
     k->ioeventfd_enabled = virtio_pci_ioeventfd_enabled;
     k->ioeventfd_assign = virtio_pci_ioeventfd_assign;
+        memory_region_add_eventfd
     k->get_dma_as = virtio_pci_get_dma_as;
     k->iommu_enabled = virtio_pci_iommu_enabled;
     k->queue_enabled = virtio_pci_queue_enabled;
 }
 
+
+virtio_queue_host_notifier_read
+    virtio_queue_notify_vq
+        vq->handle_output(vdev, vq)
+
+
+virtio_pci_vector_poll
+    msix_is_masked(dev, vector)
+        msix_vector_masked(dev, vector, dev->msix_function_masked)
+    msix_set_pending(dev, vector) -> *msix_pending_byte(dev, vector) |= msix_pending_mask(vector)
+    virtio_pci_get_notifier(proxy, VIRTIO_CONFIG_IRQ_IDX, &notifier, &vector)
+
+
+
+
+
+send_add_regions
+    trace_vhost_user_set_mem_table_withfd(reg_fd_idx, mr->name, reg->memory_size, reg->guest_phys_addr, reg->userspace_addr, offset)
+
+
+
+
+
+type_init(vhost_input_register_types) -> 添加 vhost-user-input-pci，添加一个新的 virtio-input 设备，连接到 vhost-user 后端。它不是直接从输入设备/evdev（如 virtio-input-host）读取配置，而是通过 vhost-user 协议使用 {SET,GET}_CONFIG 消息读取配置。vhost-user-backend 处理队列和事件设置
+static const TypeInfo vhost_input_info = {
+    .name          = TYPE_VHOST_USER_INPUT, -> "vhost-user-input"
+    .parent        = TYPE_VIRTIO_INPUT,
+    .instance_size = sizeof(VHostUserInput),
+    .instance_init = vhost_input_init,
+        object_property_add_alias(obj, "chardev", OBJECT(vhi->vhost), "chardev")
+    .instance_finalize = vhost_input_finalize,
+    .class_init    = vhost_input_class_init,
+        dc->vmsd = &vmstate_vhost_input -> .name = "vhost-user-input"
+        vdc->get_config = vhost_input_get_config;
+            vhost_dev_get_config(&vhi->vhost->dev, config_data, vinput->cfg_size, &local_err)
+                hdev->vhost_ops->vhost_get_config(hdev, config, config_len, errp)
+        vdc->set_config = vhost_input_set_config;
+            vhost_dev_set_config(&vhi->vhost->dev, config_data, 0, sizeof(virtio_input_config), VHOST_SET_CONFIG_TYPE_FRONTEND)
+                hdev->vhost_ops->vhost_set_config(hdev, data, offset, size, flags)
+            virtio_notify_config(vdev)
+                virtio_set_isr(vdev, 0x3)
+                virtio_notify_vector(vdev, vdev->config_vector)
+        vdc->get_vhost = vhost_input_get_vhost;
+        vic->realize = vhost_input_realize;
+            vhost_user_backend_dev_init(vhi->vhost, vdev, 2, errp)
+                vhost_user_init
+                vhost_dev_init
+        vic->change_active = vhost_input_change_active
+            vhost_user_backend_start
+            vhost_dev_start
+};
+
+
+
+
+/* virtio-mmio device */
+virtio_mmio_properties
+
+
+
+vhost-user-blk -b /dev/sdb -s /path/vhost.socket
+contrib/vhost-user-blk/vhost-user-blk.c -> main
+    csock = accept(lsock, NULL, NULL)
+    vdev_blk = vub_new(opt_blk_file)
+        vdev_blk = g_new0(VubDev, 1)
+        vdev_blk->loop = g_main_loop_new(NULL, FALSE)
+        vdev_blk->blk_fd = vub_open(blk_file, 0)
+        vub_initialize_config(vdev_blk->blk_fd, &vdev_blk->blkcfg)
+            capacity = lseek(fd, 0, SEEK_END);
+            config->capacity = capacity >> 9;
+            config->blk_size = vub_get_blocksize(fd);
+            config->size_max = 65536;
+            config->seg_max = 128 - 2;
+            config->min_io_size = 1;
+            config->opt_io_size = 1;
+            config->num_queues = 1;
+            #if defined(__linux__) && defined(BLKDISCARD) && defined(BLKZEROOUT)
+            config->max_discard_sectors = 32768;
+            config->max_discard_seg = 1;
+            config->discard_sector_alignment = config->blk_size >> 9;
+            config->max_write_zeroes_sectors = 32768;
+            config->max_write_zeroes_seg = 1;
+    vug_init(&vdev_blk->parent, VHOST_USER_BLK_MAX_QUEUES, csock, vub_panic_cb, &vub_iface)
+        vu_init(&dev->parent, max_queues, socket, panic, NULL, set_watch, remove_watch, iface)
+        dev->fdmap = g_hash_table_new_full(NULL, NULL, NULL, (GDestroyNotify) vug_source_destroy)
+        dev->src = vug_source_new(dev, socket, G_IO_IN, vug_watch, NULL)
+            g_source_add_poll(gsrc, &src->gfd)
+            vu_dispatch
+                reply_requested = vu_process_message(dev, &vmsg)
+                    dev->iface->process_msg(dev, vmsg, &do_reply)
+                    case VHOST_USER_SET_MEM_TABLE
+                        vu_set_mem_table_exec(dev, vmsg)
+                            dev_region->gpa = msg_region->guest_phys_addr
+                            dev_region->qva = msg_region->userspace_addr
+                            mmap_addr = mmap(0, dev_region->size + dev_region->mmap_offset, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_NORESERVE, vmsg->fds[i], 0)
+                            dev_region->mmap_addr = (uint64_t)(uintptr_t)mmap_addr
+                            map_ring(dev, &dev->vq[i]
+                                vq->vring.desc = qva_to_va(dev, vq->vra.desc_user_addr);
+                                    (void *)(uintptr_t) qemu_addr - r->qva + r->mmap_addr + r->mmap_offset
+                                vq->vring.used = qva_to_va(dev, vq->vra.used_user_addr);
+                                vq->vring.avail = qva_to_va(dev, vq->vra.avail_user_addr)
+    g_main_loop_run(vdev_blk->loop)
+    g_main_loop_unref(vdev_blk->loop)
+
+
+
+
+vu_process_message
+    case VHOST_USER_ADD_MEM_REG
+        vu_add_mem_reg
+            generate_faults
+                madvise((void *)(uintptr_t)dev_region->mmap_addr, dev_region->size + dev_region->mmap_offset, MADV_DONTNEED)
+
+
+
+vhost_vdpa_svq_set_fds
+    file.fd = event_notifier_get_fd(event_notifier)
+    vhost_vdpa_set_vring_dev_kick(dev, &file)
+
+
+
+vfio:
+register_vfio_pci_dev_type
+    type_register_static(&vfio_pci_dev_info);
+    type_register_static(&vfio_pci_nohotplug_dev_info)
+
+static const TypeInfo vfio_pci_dev_info = {
+    .class_init = vfio_pci_dev_class_init,
+    .instance_init = vfio_instance_init,
+    .instance_finalize = vfio_instance_finalize,
+};
+
+static const TypeInfo vfio_pci_nohotplug_dev_info = {
+    .class_init = vfio_pci_nohotplug_dev_class_init,
+};
+
+
+
+vfio_pci_dev_class_init
+    device_class_set_props(dc, vfio_pci_dev_properties)
+#ifdef CONFIG_IOMMUFD
+    object_class_property_add_str(klass, "fd", NULL, vfio_pci_set_fd);
+    pdc->realize = vfio_realize;
+        vfio_bar_quirk_setup
+            vfio_probe_nvidia_bar0_quirk
+        vfio_populate_device -> 直通PCI设备的MMIO内存主要是指其Bar空间，qemu使用vfio_populate_device函数调用VFIO接口获取到PCI设备的Bar空间信息，然后通过vfio_region_setup获取到对应region的信息，并将qemu内存虚拟化的MemoryRegion设置为IO类型的region。重要的是，qemu会为该IO类型的MemoryRegion设置ops为vfio_region_ops，这样后续对于该块内存的读写会经过qemu VFIO模块注册的接口来进行
+            vfio_region_setup
+                memory_region_init_io(region->mem, obj, &vfio_region_ops, region, name, region->size) -> 对于MMIO内存的的映射，主要是将物理内存中的MMIO空间映射到了qemu的虚拟地址空间，然后再由qemu将该段内存注册进虚拟机作为虚拟机的一段物理内存，在这个过程中会建立从gpa到hpa的EPT页表映射，提升MMIO的性能
+    pdc->exit = vfio_exitfn;
+    pdc->config_read = vfio_pci_read_config;
+    pdc->config_write = vfio_pci_write_config
+        pwrite(vdev->vbasedev.fd, &val_le, len, vdev->config_offset + addr)
+        msi_enabled
+        vfio_msi_enable
+        or msix_enabled
+        vfio_sub_page_bar_update_mapping(pdev, bar)
+
+
+static const MemoryRegionOps vfio_nvidia_mirror_quirk = {
+    .read = vfio_generic_quirk_mirror_read,
+    .write = vfio_nvidia_quirk_mirror_write,
+        vfio_ioeventfd_init
+            ioeventfd->vfio = !ioctl(vdev->vbasedev.fd, VFIO_DEVICE_IOEVENTFD, &vfio_ioeventfd)
+    .endianness = DEVICE_LITTLE_ENDIAN,
+};
+
+
+
+
+const MemoryRegionOps vfio_region_ops = {
+    .read = vfio_region_read,
+    .write = vfio_region_write,
 
 
 virtio test:
@@ -2193,6 +2533,16 @@ static void virtio_scsi_class_init(ObjectClass *klass, void *data)
     hc->unplug = virtio_scsi_hotunplug;
 }
 
+qemu-system-x86_64 \
+    -enable-kvm -cpu host -smp cores=8,sockets=1 \
+    -m 1G -object memory-backend-file,id=mem0,size=1G,mem-path=/dev/hugepages,share=on -numa node,memdev=mem0 \
+    -drive file=/root/big/qemu/ubuntu20.qcow2,if=virtio \
+    -chardev socket,id=spdk_vhost_scsi0,path=/var/tmp/vhost.0 \
+    -device vhost-user-scsi-pci,id=scsi0,chardev=spdk_vhost_scsi0,num_queues=2 \
+    -nic user,hostfwd=tcp::2222-:22  -device usb-ehci,id=usb,bus=pci.0,addr=0x8 \
+    -device usb-tablet -vnc :75
+
+
 type_init(vhost_user_scsi_pci_register)
     virtio_pci_types_register(&vhost_user_scsi_pci_info)
 qemu -device vhost-user-scsi-pci
@@ -2210,6 +2560,7 @@ vhost_user_scsi_realize
     virtio_scsi_common_realize(dev, vhost_user_scsi_handle_output, vhost_user_scsi_handle_output, vhost_user_scsi_handle_output, &err)
         virtio_init(vdev, VIRTIO_ID_SCSI, sizeof(VirtIOSCSIConfig))
         s->ctrl_vq = virtio_add_queue(vdev, s->conf.virtqueue_size, ctrl); -> vhost_user_scsi_handle_output
+            vhost_dev_is_started(&vsc->dev) -> start only once
             vhost_user_scsi_start(s, &local_err) -> vq is start status?
                 vhost_scsi_common_start
                     vhost_dev_enable_notifiers
@@ -2225,7 +2576,7 @@ vhost_user_scsi_realize
                         vhost_dev_set_features(hdev, hdev->log_enabled)
                     vhost_dev_start(&vsc->dev, vdev, true) -> int vhost_dev_start(struct vhost_dev *hdev, VirtIODevice *vdev, bool vrings)
                     vhost_virtqueue_mask(&vsc->dev, vdev, vsc->dev.vq_index + i, false)
-             for (i = 0; i < vsc->dev.nvqs; i++)
+            for (i = 0; i < vsc->dev.nvqs; i++)
                 VirtQueue *kick_vq = virtio_get_queue(vdev, i)
                 virtio_queue_get_desc_addr(vdev, i)
                 event_notifier_set(virtio_queue_get_host_notifier(kick_vq)
@@ -2285,7 +2636,7 @@ vhost_user_scsi_realize
 #15 0x0000555555db4b0a in flatview_write (fv=0x7fffa00d2680, addr=4261412884, attrs=..., buf=0x7ffff7fc6028, len=1) at ../system/physmem.c:2756
 #16 0x0000555555db4eca in address_space_write (as=0x555556fdb180 <address_space_memory>, addr=4261412884, attrs=..., buf=0x7ffff7fc6028, len=1) at ../system/physmem.c:2863
 #17 0x0000555555db4f3b in address_space_rw (as=0x555556fdb180 <address_space_memory>, addr=4261412884, attrs=..., buf=0x7ffff7fc6028, len=1, is_write=true) at ../system/physmem.c:2873
-#18 0x0000555555e09144 in kvm_cpu_exec (cpu=0x55555739c680) at ../accel/kvm/kvm-all.c:2902
+#18 0x0000555555e09144 in kvm_cpu_exec (cpu=0x55555739c680) at ../accel/kvm/kvm-all.c:2902 -> case KVM_EXIT_MMIO
 #19 0x0000555555e0bf96 in kvm_vcpu_thread_fn (arg=0x55555739c680) at ../accel/kvm/kvm-accel-ops.c:50
 #20 0x0000555556018eba in qemu_thread_start (args=0x5555573a5ff0) at ../util/qemu-thread-posix.c:541
 #21 0x00007ffff753f609 in start_thread (arg=<optimized out>) at pthread_create.c:477
@@ -2341,8 +2692,749 @@ vhost_user_scsi_realize
 
 
 
-virtio_scsi_common_realize(dev, virtio_scsi_handle_ctrl, virtio_scsi_handle_event, virtio_scsi_handle_cmd, &err)
+
+
+vdpa:
+sudo x86_64-softmmu/qemu-system-x86_64 \
+        -hda Fedora-Cloud-Base-32-1.6.x86_64.qcow2 \
+        -netdev type=vhost-vdpa,vhostdev=/dev/vhost-vdpa-0,id=vhost-vdpa1 \
+        -device virtio-net-pci,netdev=vhost-vdpa1,mac=00:e8:ca:33:ba:05,\
+        disable-modern=off,page-per-vq=on \
+        -enable-kvm \
+        -nographic \
+        -m 4G \
+        -cpu host \
+        2>&1 | tee vm.log
+
+#define TYPE_VHOST_VDPA "vhost-vdpa"
+
+net_init_vhost_vdpa
+    ncs[i] = net_vhost_vdpa_init(peer, TYPE_VHOST_VDPA, name, vdpa_device_fd, i, 2, true, opts->x_svq, iova_range, features, shared, errp)
+        if (is_datapath)
+            nc = qemu_new_net_client(&net_vhost_vdpa_info, peer, device, name)
+        else
+            cvq_isolated = vhost_vdpa_probe_cvq_isolation(vdpa_device_fd, features, queue_pair_index * 2, errp)
+            nc = qemu_new_net_control_client(&net_vhost_vdpa_cvq_info, peer, device, name)
+        if (!is_datapath)
+            s->cvq_cmd_out_buffer = mmap(NULL, vhost_vdpa_net_cvq_cmd_page_len(), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0)
+            s->status = mmap(NULL, vhost_vdpa_net_cvq_cmd_page_len(), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0)
+            s->vhost_vdpa.shadow_vq_ops = &vhost_vdpa_net_svq_ops
+                .avail_handler = vhost_vdpa_net_handle_ctrl_avail
+        vhost_vdpa_add(nc, (void *)&s->vhost_vdpa, queue_pair_index, nvqs)
+            options.backend_type = VHOST_BACKEND_TYPE_VDPA
+            net = vhost_net_init(&options)
+            vhost_vdpa_net_check_device_id(net)
+                hdev->vhost_ops->vhost_get_device_id(hdev, &device_id)
 
 
 
+static int (* const net_client_init_fun[NET_CLIENT_DRIVER__MAX])(
+    const Netdev *netdev,
+    const char *name,
+    NetClientState *peer, Error **errp) = {
+        [NET_CLIENT_DRIVER_NIC]       = net_init_nic,
+#ifdef CONFIG_SLIRP
+        [NET_CLIENT_DRIVER_USER]      = net_init_slirp,
+#endif
+        [NET_CLIENT_DRIVER_TAP]       = net_init_tap,
+        [NET_CLIENT_DRIVER_SOCKET]    = net_init_socket,
+        [NET_CLIENT_DRIVER_STREAM]    = net_init_stream,
+        [NET_CLIENT_DRIVER_DGRAM]     = net_init_dgram,
+#ifdef CONFIG_VDE
+        [NET_CLIENT_DRIVER_VDE]       = net_init_vde,
+#endif
+#ifdef CONFIG_NETMAP
+        [NET_CLIENT_DRIVER_NETMAP]    = net_init_netmap,
+#endif
+#ifdef CONFIG_AF_XDP
+        [NET_CLIENT_DRIVER_AF_XDP]    = net_init_af_xdp,
+#endif
+#ifdef CONFIG_NET_BRIDGE
+        [NET_CLIENT_DRIVER_BRIDGE]    = net_init_bridge,
+#endif
+        [NET_CLIENT_DRIVER_HUBPORT]   = net_init_hubport,
+#ifdef CONFIG_VHOST_NET_USER
+        [NET_CLIENT_DRIVER_VHOST_USER] = net_init_vhost_user,
+#endif
+#ifdef CONFIG_VHOST_NET_VDPA
+        [NET_CLIENT_DRIVER_VHOST_VDPA] = net_init_vhost_vdpa,
+#endif
+#ifdef CONFIG_L2TPV3
+        [NET_CLIENT_DRIVER_L2TPV3]    = net_init_l2tpv3,
+#endif
+#ifdef CONFIG_VMNET
+        [NET_CLIENT_DRIVER_VMNET_HOST] = net_init_vmnet_host,
+        [NET_CLIENT_DRIVER_VMNET_SHARED] = net_init_vmnet_shared,
+        [NET_CLIENT_DRIVER_VMNET_BRIDGED] = net_init_vmnet_bridged,
+#endif /* CONFIG_VMNET */
+};
+
+
+static NetClientInfo net_vhost_vdpa_info = {
+        .type = NET_CLIENT_DRIVER_VHOST_VDPA,
+        .size = sizeof(VhostVDPAState),
+        .receive = vhost_vdpa_receive,
+        .start = vhost_vdpa_net_data_start,
+            vhost_vdpa_net_data_start_first(s)
+                migration_add_notifier(&s->migration_state, vdpa_net_migration_state_notifier)
+                    notifier_list_add(&migration_state_notifiers, notify)
+                    -> vdpa_net_migration_state_notifier
+                        if (migration_in_setup(migration))
+                            vhost_vdpa_net_log_global_enable(s, true)
+                                 vhost_net_stop(vdev, n->nic->ncs, data_queue_pairs, cvq)
+                                    vhost_net_stop_one(get_vhost_net(peer), dev)
+                                        vhost_dev_stop
+                                            vhost_dev_set_vring_enable(hdev, false)
+                                            vhost_virtqueue_stop(hdev, vdev, hdev->vqs + i, hdev->vq_index + i)
+                                            memory_listener_unregister(&hdev->iommu_listener)
+                                        vhost_dev_disable_notifiers
+                                 vhost_net_start(vdev, n->nic->ncs, data_queue_pairs, cvq)
+                                    vhost_net_start_one
+                                        vhost_dev_enable_notifiers
+                                        vhost_dev_start(&net->dev, dev, false)
+                                        net->nc->info->poll(net->nc, false)
+                                        net->nc->info->load(net->nc)
+                v->shared->iova_tree = vhost_iova_tree_new(v->shared->iova_range.first, v->shared->iova_range.last)
+        .load = vhost_vdpa_net_data_load,
+            vhost_vdpa_set_vring_ready(v, i + v->dev->vq_index)
+                vhost_vdpa_call(dev, VHOST_VDPA_SET_VRING_ENABLE, &state)
+        .stop = vhost_vdpa_net_client_stop,
+        .cleanup = vhost_vdpa_cleanup,
+        .has_vnet_hdr = vhost_vdpa_has_vnet_hdr,
+        .has_ufo = vhost_vdpa_has_ufo,
+        .check_peer_type = vhost_vdpa_check_peer_type,
+        .set_steering_ebpf = vhost_vdpa_set_steering_ebpf,
+};
+
+type_init(virtio_net_pci_register)
+    virtio_net_pci_info
+static const VirtioPCIDeviceTypeInfo virtio_net_pci_info = {
+    .base_name             = TYPE_VIRTIO_NET_PCI,
+    .generic_name          = "virtio-net-pci",
+    .transitional_name     = "virtio-net-pci-transitional",
+    .non_transitional_name = "virtio-net-pci-non-transitional",
+    .instance_init = virtio_net_pci_instance_init,
+    .class_init    = virtio_net_pci_class_init,
+        vpciklass->realize = virtio_net_pci_realize
+            qdev_realize(vdev, BUS(&vpci_dev->bus), errp)
+};
+
+
+
+无论如何，为了充分利用 vDPA 硬件设备的性能，我们始终可以使用 QEMU 提供的通用 vhost-vdpa-device-pci 设备，该设备支持任何 vDPA 设备并将其直接公开给客户机。当然，QEMU 无法在这种情况下拦截请求，因此其块层提供的一些功能（例如实时迁移、磁盘格式等）不受支持。从 QEMU 8.0 开始，您可以使用以下选项将通用 vDPA 设备连接到虚拟机
+static const VirtioPCIDeviceTypeInfo vhost_vdpa_device_pci_info = {
+    .base_name               = TYPE_VHOST_VDPA_DEVICE_PCI,
+    .generic_name            = "vhost-vdpa-device-pci",
+    .transitional_name       = "vhost-vdpa-device-pci-transitional",
+    .non_transitional_name   = "vhost-vdpa-device-pci-non-transitional",
+    .instance_size  = sizeof(VhostVdpaDevicePCI),
+    .instance_init  = vhost_vdpa_device_pci_instance_init,
+    .class_init     = vhost_vdpa_device_pci_class_init,
+        k->realize = vhost_vdpa_device_pci_realize
+            qdev_realize(DEVICE(&dev->vdev), BUS(&vpci_dev->bus), errp)
+                vhost_vdpa_device_realize
+};
+
+
+static void vhost_vdpa_device_class_init(ObjectClass *klass, void *data)
+{
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    VirtioDeviceClass *vdc = VIRTIO_DEVICE_CLASS(klass);
+
+    device_class_set_props(dc, vhost_vdpa_device_properties);
+    dc->desc = "VDPA-based generic device assignment";
+    dc->vmsd = &vmstate_vhost_vdpa_device;
+    set_bit(DEVICE_CATEGORY_MISC, dc->categories);
+    vdc->realize = vhost_vdpa_device_realize;
+        v->vhostfd = qemu_open(v->vhostdev, O_RDWR, errp)
+            qemu_open_internal
+                qemu_open_cloexec(name, flags, mode)
+                    ret = open(name, flags, mode)
+                if (ret == -1) -> if open err
+                    #ifdef O_DIRECT
+                        ret = open(name, flags & ~O_DIRECT, mode)
+        v->vdev_id = vhost_vdpa_device_get_u32(v->vhostfd, VHOST_VDPA_GET_DEVICE_ID, errp)
+        max_queue_size = vhost_vdpa_device_get_u32(v->vhostfd, VHOST_VDPA_GET_VRING_NUM, errp)
+        v->num_queues = vhost_vdpa_device_get_u32(v->vhostfd, VHOST_VDPA_GET_VQS_COUNT, errp)
+        vqs = g_new0(struct vhost_virtqueue, v->dev.nvqs)
+        vhost_vdpa_get_iova_range(v->vhostfd, &iova_range)
+        vhost_dev_init(&v->dev, &v->vdpa, VHOST_BACKEND_TYPE_VDPA, 0, NULL)
+        v->config_size = vhost_vdpa_device_get_u32(v->vhostfd, VHOST_VDPA_GET_CONFIG_SIZE, errp)
+        if (v->post_init && v->post_init(v, errp) < 0)
+        vhost_dev_get_config(&v->dev, v->config, v->config_size, NULL)
+        virtio_init(vdev, v->vdev_id, v->config_size)
+        for (i = 0; i < v->dev.nvqs; i++)
+            v->virtqs[i] = virtio_add_queue(vdev, v->queue_size, vhost_vdpa_device_dummy_handle_output)
+    vdc->unrealize = vhost_vdpa_device_unrealize;
+    vdc->get_config = vhost_vdpa_device_get_config;
+    vdc->set_config = vhost_vdpa_device_set_config;
+    vdc->get_features = vhost_vdpa_device_get_features;
+    vdc->set_status = vhost_vdpa_device_set_status;
+}
+
+
+qcow2 镜像可用于主机应用程序和容器
+# load vdpa buses
+$ modprobe -a virtio-vdpa vhost-vdpa
+
+# create an empty qcow2 image
+$ qemu-img create -f qcow2 test.qcow2 10G
+
+# load vduse kernel module
+$ modprobe vduse
+
+# launch QSD exposing the `test.qcow2` image as `vduse0` vDPA device
+$ qemu-storage-daemon --blockdev file,filename=test.qcow2,node-name=file \
+  --blockdev qcow2,file=file,node-name=qcow2 \
+  --export vduse-blk,id=vduse0,name=vduse0,num-queues=1,node-name=qcow2,writable=on &
+
+# instantiate the `vduse0` device (same name used in QSD)
+$ vdpa dev add name vduse0 mgmtdev vduse
+
+# be sure to attach it to the `virtio-vdpa` device to use with host applications
+$ driverctl -b vdpa set-override vduse0 virtio_vdpa
+
+# device exposed as a virtio device, but attached to the host kernel
+$ lsblk -pv
+NAME     TYPE TRAN   SIZE RQ-SIZE  MQ
+/dev/vda disk virtio  10G     256   1
+
+# start a container with `/dev/vda` attached
+podman run -it --rm --device /dev/vda --group-add keep-groups fedora:39 bash
+
+
+使用 vDPA 设备启动 VM
+# download Fedora cloud image (or use any other bootable image you want)
+$ wget https://download.fedoraproject.org/pub/fedora/linux/releases/39/Cloud/x86_64/images/Fedora-Cloud-Base-39-1.5.x86_64.qcow2
+
+# launch QSD exposing the VM image as `vduse1` vDPA device
+$ qemu-storage-daemon \
+  --blockdev file,filename=Fedora-Cloud-Base-39-1.5.x86_64.qcow2,node-name=file \
+  --blockdev qcow2,file=file,node-name=qcow2 \
+  --export vduse-blk,id=vduse1,name=vduse1,num-queues=1,node-name=qcow2,writable=on &
+
+# instantiate the `vduse1` device (same name used in QSD)
+$ vdpa dev add name vduse1 mgmtdev vduse
+
+# initially it's attached to the host (`/dev/vdb`), because `virtio-vdpa`
+# is the first kernel module we loaded
+$ lsblk -pv
+NAME     TYPE TRAN   SIZE RQ-SIZE  MQ
+/dev/vda disk virtio  10G     256   1
+/dev/vdb disk virtio   5G     256   1
+$ lsblk /dev/vdb
+NAME   MAJ:MIN RM  SIZE RO TYPE MOUNTPOINTS
+vdb    251:16   0    5G  0 disk 
+├─vdb1 251:17   0    1M  0 part 
+├─vdb2 251:18   0 1000M  0 part 
+├─vdb3 251:19   0  100M  0 part 
+├─vdb4 251:20   0    4M  0 part 
+└─vdb5 251:21   0  3.9G  0 part 
+
+# and it is identified as `virtio1` in the host
+$ ls /sys/bus/vdpa/devices/vduse1/
+driver  driver_override  power  subsystem  uevent  virtio1
+
+# attach it to the `vhost-vdpa` device to use the device with VMs
+$ driverctl -b vdpa set-override vduse1 vhost_vdpa
+
+# `/dev/vdb` is not available anymore
+$ lsblk -pv
+NAME     TYPE TRAN   SIZE RQ-SIZE  MQ
+/dev/vda disk virtio  10G     256   1
+
+# the device is identified as `vhost-vdpa-1` in the host
+$ ls /sys/bus/vdpa/devices/vduse1/
+driver  driver_override  power  subsystem  uevent  vhost-vdpa-1
+$ ls -l /dev/vhost-vdpa-1
+crw-------. 1 root root 511, 0 Feb 12 17:58 /dev/vhost-vdpa-1
+
+# launch QEMU using `/dev/vhost-vdpa-1` device with the
+# `virtio-blk-vhost-vdpa` libblkio driver
+$ qemu-system-x86_64 -m 512M -smp 2 -M q35,accel=kvm,memory-backend=mem \
+  -object memory-backend-memfd,share=on,id=mem,size="512M" \
+  -blockdev node-name=drive0,driver=virtio-blk-vhost-vdpa,path=/dev/vhost-vdpa-1,cache.direct=on \
+  -device virtio-blk-pci,drive=drive0
+
+# `virtio-blk-vhost-vdpa` blockdev can be used with any QEMU block layer
+# features (e.g live migration, I/O throttling).
+# In this example we are using I/O throttling:
+$ qemu-system-x86_64 -m 512M -smp 2 -M q35,accel=kvm,memory-backend=mem \
+  -object memory-backend-memfd,share=on,id=mem,size="512M" \
+  -blockdev node-name=drive0,driver=virtio-blk-vhost-vdpa,path=/dev/vhost-vdpa-1,cache.direct=on \
+  -blockdev node-name=throttle0,driver=throttle,file=drive0,throttle-group=limits0 \
+  -object throttle-group,id=limits0,x-iops-total=2000 \
+  -device virtio-blk-pci,drive=throttle0
+
+# Alternatively, we can use the generic `vhost-vdpa-device-pci` to take
+# advantage of all the performance, but without having any QEMU block layer
+# features available
+$ qemu-system-x86_64 -m 512M -smp 2 -M q35,accel=kvm,memory-backend=mem \
+  -object memory-backend-memfd,share=on,id=mem,size="512M" \
+  -device vhost-vdpa-device-pci,vhostdev=/dev/vhost-vdpa-0
+
+
+
+Virtio-SCSI:
+-device virtio-scsi-pci
+-device scsi-hd,drive=hd0,bootindex=0
+-drive file=/home/qemu-imgs/test.img,if=none,id=hd0
+
+
+// In hw/scsi/virtio-scsi.c
+void virtio_scsi_common_realize(DeviceState *dev,
+                                VirtIOHandleOutput ctrl,
+                                VirtIOHandleOutput evt,
+                                VirtIOHandleOutput cmd,
+                                Error **errp)
+{
+    ...
+    s->ctrl_vq = virtio_add_queue(vdev, s->conf.virtqueue_size, ctrl);
+    s->event_vq = virtio_add_queue(vdev, s->conf.virtqueue_size, evt);
+    for (i = 0; i < s->conf.num_queues; i++) {
+        s->cmd_vqs[i] = virtio_add_queue(vdev, s->conf.virtqueue_size, cmd);
+    }
+}
+Most VirtIO devices will have multiple VirtQueues, with each VirtQueue having their own unique functionality. In the virtio-SCSI case, we have a control VirtQueue (ctrl_vq), an event VirtQueue (event_vq), and one or more command (or request) VirtQueues (cmd_vqs).
+
+The control VirtQueue is used for task management functions (TMFs) such as starting up, shutting down, resetting, etc. the virtio-SCSI device. It is also used for subscribing to and querying asynchronous notifications.
+
+The event VirtQueue is used for reporting information (events) from the host on logical units attached to virtio-SCSI. These events include transport events (e.g device resets, rescans, hot-plug, hot-unplug, etc.), asynchronous notifications, and logical unit number (LUN) parameter changes.
+
+Lastly, the command or request VirtQueues are used for typical SCSI transport commands (e.g. reading and writing to and from files). In this section we’ll focus on the operations of the command VirtQueue as it’s more interesting and used more compared to the other two.
+
+
+
+U_BOOT_PCI_DEVICE(virtio_pci_modern, virtio_pci_supported);
+U_BOOT_DRIVER(virtio_pci_modern) = {
+	.name	= VIRTIO_PCI_DRV_NAME,
+	.id	= UCLASS_VIRTIO,
+	.ops	= &virtio_pci_ops,
+	.bind	= virtio_pci_bind,
+	.probe	= virtio_pci_probe,
+	.priv_auto	= sizeof(struct virtio_pci_priv),
+};
+
+static const struct dm_virtio_ops virtio_pci_ops = {
+	.get_config	= virtio_pci_get_config,
+	.set_config	= virtio_pci_set_config,
+	.generation	= virtio_pci_generation,
+	.get_status	= virtio_pci_get_status,
+	.set_status	= virtio_pci_set_status,
+	.reset		= virtio_pci_reset,
+	.get_features	= virtio_pci_get_features,
+	.set_features	= virtio_pci_set_features,
+	.find_vqs	= virtio_pci_find_vqs,
+        virtio_pci_setup_vq
+            vring_create_virtqueue
+                __vring_new_virtqueue
+                    vq->event = virtio_has_feature(vdev, VIRTIO_RING_F_EVENT_IDX);
+	.del_vqs	= virtio_pci_del_vqs,
+	.notify		= virtio_pci_notify,
+};
+
+
+
+U_BOOT_DRIVER(virtio_blk) = {
+	.name	= VIRTIO_BLK_DRV_NAME,
+	.id	= UCLASS_BLK,
+	.ops	= &virtio_blk_ops,
+	.bind	= virtio_blk_bind,
+	.probe	= virtio_blk_probe,
+	.remove	= virtio_reset,
+	.priv_auto	= sizeof(struct virtio_blk_priv),
+	.flags	= DM_FLAG_ACTIVE_DMA,
+};
+static const struct blk_ops virtio_blk_ops = {
+	.read	= virtio_blk_read,
+	.write	= virtio_blk_write,
+        virtio_blk_do_req
+            virtqueue_add
+                virtqueue_kick
+                    virtqueue_kick_prepare
+                        if (vq->event)
+                            needs_kick = vring_need_event(virtio16_to_cpu(vq->vdev, vring_avail_event(&vq->vring)), new, old)
+                                (*(__virtio16 *)&(&vq->vring)->used->ring[(&vq->vring)->num])
+                        else
+                            needs_kick = !(vq->vring.used->flags & cpu_to_virtio16(vq->vdev, VRING_USED_F_NO_NOTIFY))
+                    virtio_notify(vq->vdev, vq)
+};
+
+
+
+
+virtio_scsi_handle_cmd
+    virtio_scsi_handle_cmd_vq(s, vq)
+        while ((req = virtio_scsi_pop_req(s, vq)))
+            virtio_scsi_handle_cmd_req_prepare
+        virtio_scsi_handle_cmd_req_submit(s, req)
+            if (scsi_req_enqueue(sreq))
+                scsi_req_enqueue_internal(req)
+                rc = req->ops->send_command(req, req->cmd.buf)
+
+
+const SCSIReqOps scsi_generic_req_ops = {
+    .size         = sizeof(SCSIGenericReq),
+    .free_req     = scsi_free_request,
+    .send_command = scsi_send_command,
+        execute_command(s->conf.blk, r, SG_DXFER_NONE, scsi_command_complete)
+            r->req.aiocb = blk_aio_ioctl(blk, SG_IO, &r->io_header, complete, r)
+                blk_aio_prwv(blk, req, 0, buf, blk_aio_ioctl_entry, 0, cb, opaque)
+    .read_data    = scsi_read_data,
+    .write_data   = scsi_write_data,
+    .get_buf      = scsi_get_buf,
+    .load_request = scsi_generic_load_request,
+    .save_request = scsi_generic_save_request,
+};
+
+
+
+blk_aio_ioctl_entry
+    blk_co_do_ioctl(rwco->blk, rwco->offset, rwco->iobuf)
+        bdrv_co_ioctl(blk_bs(blk), req, buf)
+            bdrv_inc_in_flight(bs)
+            if (drv->bdrv_co_ioctl)
+                co.ret = drv->bdrv_co_ioctl(bs, req, buf) -> raw_co_ioctl
+            else
+                acb = drv->bdrv_aio_ioctl(bs, req, buf, bdrv_co_io_em_complete, &co)
+                qemu_coroutine_yield()
+            bdrv_dec_in_flight(bs)
+    blk_aio_complete(acb)
+
+scsi_command_complete
+    scsi_command_complete_noio
+        scsi_req_complete(&r->req, status)
+            scsi_req_dequeue(req)
+                req->bus->info->complete(req, req->residual) -> virtio_scsi_command_complete
+
+
+
+static struct SCSIBusInfo virtio_scsi_scsi_info = {
+    .tcq = true,
+    .max_channel = VIRTIO_SCSI_MAX_CHANNEL,
+    .max_target = VIRTIO_SCSI_MAX_TARGET,
+    .max_lun = VIRTIO_SCSI_MAX_LUN,
+    .complete = virtio_scsi_command_complete,
+        virtio_scsi_complete_cmd_req(req)
+            virtio_scsi_complete_req
+                qemu_iovec_from_buf(&req->resp_iov, 0, &req->resp, req->resp_size)
+                virtqueue_push(vq, &req->elem, req->qsgl.size + req->resp_iov.size)
+                if (s->dataplane_started && !s->dataplane_fenced)
+                    virtio_notify_irqfd(vdev, vq)
+                else
+                    virtio_notify(vdev, vq)
+                        virtio_irq(vq)
+    .fail = virtio_scsi_command_failed,
+    .cancel = virtio_scsi_request_cancelled,
+    .change = virtio_scsi_change,
+    .parse_cdb = virtio_scsi_parse_cdb,
+    .get_sg_list = virtio_scsi_get_sg_list,
+    .save_request = virtio_scsi_save_request,
+    .load_request = virtio_scsi_load_request,
+    .drained_begin = virtio_scsi_drained_begin,
+    .drained_end = virtio_scsi_drained_end,
+};
+
+
+
+virtio_pci_notify
+    /* Select the queue we're interested in */
+	iowrite16(vq->index, &priv->common->queue_select)
+    off = ioread16(&priv->common->queue_notify_off)
+    We write the queue's selector into the notification register to signal the other end
+    iowrite16(vq->index, priv->notify_base + off * priv->notify_offset_multiplier)
+
+
+
+virtio_scsi_handle_ctrl
+    virtio_scsi_handle_ctrl_vq(s, vq)
+        virtio_scsi_handle_ctrl_req(s, req)
+
+
+
+virtio_scsi_handle_event
+    virtio_scsi_handle_event_vq(s, vq)
+        .event = VIRTIO_SCSI_T_NO_EVENT
+        virtio_scsi_push_event(s, &info)
+            req = virtio_scsi_pop_req(s, vs->event_vq)
+            virtio_scsi_parse_req(req, 0, sizeof(VirtIOSCSIEvent))
+                qemu_iovec_concat_iov(&req->resp_iov, req->elem.in_sg, req->elem.in_num, 0, resp_size) < resp_size)
+                    qemu_iovec_add
+                 out_size = qemu_sgl_concat
+                    qemu_sglist_add
+                  in_size = qemu_sgl_concat
+            evt->event = virtio_tswap32(vdev, event);
+            evt->reason = virtio_tswap32(vdev, reason)
+            virtio_scsi_complete_req(req)
+
+
+
+
+BlockDriver bdrv_raw = {
+    .format_name          = "raw",
+    .instance_size        = sizeof(BDRVRawState),
+    .supports_zoned_children = true,
+    .bdrv_probe           = &raw_probe,
+    .bdrv_reopen_prepare  = &raw_reopen_prepare,
+    .bdrv_reopen_commit   = &raw_reopen_commit,
+    .bdrv_reopen_abort    = &raw_reopen_abort,
+    .bdrv_open            = &raw_open,
+    .bdrv_child_perm      = raw_child_perm,
+    .bdrv_co_create_opts  = &raw_co_create_opts,
+    .bdrv_co_preadv       = &raw_co_preadv,
+    .bdrv_co_pwritev      = &raw_co_pwritev,
+    .bdrv_co_pwrite_zeroes = &raw_co_pwrite_zeroes,
+    .bdrv_co_pdiscard     = &raw_co_pdiscard,
+    .bdrv_co_zone_report  = &raw_co_zone_report,
+    .bdrv_co_zone_mgmt  = &raw_co_zone_mgmt,
+    .bdrv_co_zone_append = &raw_co_zone_append,
+    .bdrv_co_block_status = &raw_co_block_status,
+    .bdrv_co_copy_range_from = &raw_co_copy_range_from,
+    .bdrv_co_copy_range_to  = &raw_co_copy_range_to,
+    .bdrv_co_truncate     = &raw_co_truncate,
+    .bdrv_co_getlength    = &raw_co_getlength,
+    .is_format            = true,
+    .bdrv_measure         = &raw_measure,
+    .bdrv_co_get_info     = &raw_co_get_info,
+    .bdrv_refresh_limits  = &raw_refresh_limits,
+    .bdrv_probe_blocksizes = &raw_probe_blocksizes,
+    .bdrv_probe_geometry  = &raw_probe_geometry,
+    .bdrv_co_eject        = &raw_co_eject,
+    .bdrv_co_lock_medium  = &raw_co_lock_medium,
+    .bdrv_co_ioctl        = &raw_co_ioctl,
+    .create_opts          = &raw_create_opts,
+    .bdrv_has_zero_init   = &raw_has_zero_init,
+    .strong_runtime_opts  = raw_strong_runtime_opts,
+    .mutable_opts         = mutable_opts,
+    .bdrv_cancel_in_flight = raw_cancel_in_flight,
+};
+
+
+
+
+bdrv_co_io_em_complete
+
+
+
+
+git@github.com:ssbandjl/libiscsi.git
+static BlockDriver bdrv_iser = {
+    .format_name     = "iser",
+    .protocol_name   = "iser",
+    .instance_size          = sizeof(IscsiLun),
+    .bdrv_parse_filename    = iscsi_parse_filename,
+    .bdrv_file_open         = iscsi_open,
+    .bdrv_close             = iscsi_close,
+    .bdrv_co_create_opts    = bdrv_co_create_opts_simple,
+    .create_opts            = &bdrv_create_opts_simple,
+    .bdrv_reopen_prepare    = iscsi_reopen_prepare,
+    .bdrv_reopen_commit     = iscsi_reopen_commit,
+    .bdrv_co_invalidate_cache  = iscsi_co_invalidate_cache,
+    .bdrv_co_getlength   = iscsi_co_getlength,
+    .bdrv_co_get_info    = iscsi_co_get_info,
+    .bdrv_co_truncate    = iscsi_co_truncate,
+    .bdrv_refresh_limits = iscsi_refresh_limits,
+    .bdrv_co_block_status  = iscsi_co_block_status,
+    .bdrv_co_pdiscard      = iscsi_co_pdiscard,
+    .bdrv_co_copy_range_from = iscsi_co_copy_range_from,
+    .bdrv_co_copy_range_to  = iscsi_co_copy_range_to,
+    .bdrv_co_pwrite_zeroes = iscsi_co_pwrite_zeroes,
+    .bdrv_co_readv         = iscsi_co_readv,
+    .bdrv_co_writev        = iscsi_co_writev,
+    .bdrv_co_flush_to_disk = iscsi_co_flush,
+    .bdrv_aio_ioctl   = iscsi_aio_ioctl,
+        acb = qemu_aio_get(&iscsi_aiocb_info, bs, cb, opaque)
+        if (req != SG_IO) {
+            iscsi_ioctl_handle_emulated(acb, req, buf)
+        acb->task = malloc(sizeof(struct scsi_task))
+        switch (acb->ioh->dxfer_direction) {
+        case SG_DXFER_TO_DEV:
+            acb->task->xfer_dir = SCSI_XFER_WRITE;
+        case SG_DXFER_FROM_DEV:
+            acb->task->xfer_dir = SCSI_XFER_READ;
+        default:
+            acb->task->xfer_dir = SCSI_XFER_NONE;
+        }
+        memcpy(&acb->task->cdb[0], acb->ioh->cmdp, acb->ioh->cmd_len)
+        if (acb->task->xfer_dir == SCSI_XFER_WRITE)
+            scsi_task_set_iov_out(acb->task, (struct scsi_iovec *) acb->ioh->dxferp, acb->ioh->iovec_count)
+                task->iovector_out.iov = iov;
+                task->iovector_out.niov = niov
+        iscsi_scsi_command_async(iscsi, iscsilun->lun, acb->task, iscsi_aio_ioctl_cb, (data.size > 0) ? &data : NULL,acb) -> https://github.com/sahlberg/libiscsi/blob/master/lib/iscsi-command.c
+            iscsi_queue_pdu(iscsi, pdu)
+                return iscsi->drv->queue_pdu(iscsi, pdu)
+        if (acb->task->xfer_dir == SCSI_XFER_READ)
+            scsi_task_add_data_in_buffer(acb->task, acb->ioh->dxfer_len, acb->ioh->dxferp)
+                scsi_iovector_add(task, &task->iovector_in, len, buf)
+                    iovector->iov = scsi_malloc
+                    iovector->iov[iovector->niov].iov_len = len;
+                    iovector->iov[iovector->niov].iov_base = buf;
+                    iovector->niov++;
+        iscsi_set_events(iscsilun)
+    .bdrv_detach_aio_context = iscsi_detach_aio_context,
+    .bdrv_attach_aio_context = iscsi_attach_aio_context,
+    .strong_runtime_opts = iscsi_strong_runtime_opts,
+};
+
+
+
+static iscsi_transport iscsi_transport_iser = {
+	.connect      = iscsi_iser_connect,
+	.queue_pdu    = iscsi_iser_queue_pdu,
+	.new_pdu      = iscsi_iser_new_pdu,
+	.disconnect   = iscsi_iser_disconnect,
+	.free_pdu     = iscsi_iser_free_pdu,
+	.service      = iscsi_iser_service,
+	.get_fd       = iscsi_iser_get_fd,
+	.which_events = iscsi_iser_which_events,
+};
+
+static iscsi_transport iscsi_transport_tcp = {
+	.connect      = iscsi_tcp_connect,
+	.queue_pdu    = iscsi_tcp_queue_pdu,
+        iscsi_add_to_outqueue(iscsi, pdu)
+            if (pdu->outdata.data[0] & ISCSI_PDU_IMMEDIATE)
+                iscsi_pdu_set_cmdsn(pdu, current->cmdsn)
+                iscsi_serial32_compare(pdu->cmdsn, current->cmdsn)
+                last->next = pdu
+	.new_pdu      = iscsi_tcp_new_pdu,
+	.disconnect   = iscsi_tcp_disconnect,
+	.free_pdu     = iscsi_tcp_free_pdu,
+	.service      = iscsi_tcp_service,
+	.get_fd       = iscsi_tcp_get_fd,
+	.which_events = iscsi_tcp_which_events,
+};
+
+
+
+
+.bdrv_co_pwritev        = qemu_rbd_co_pwritev,
+    qemu_rbd_start_co(bs, offset, bytes, qiov, flags, RBD_AIO_WRITE)
+        rbd_aio_create_completion(&task, (rbd_callback_t) qemu_rbd_completion_cb, &c)
+        case RBD_AIO_READ:
+            r = rbd_aio_readv(s->image, qiov->iov, qiov->niov, offset, c);
+        case RBD_AIO_WRITE:
+            r = rbd_aio_writev(s->image, qiov->iov, qiov->niov, offset, c);
+        case RBD_AIO_DISCARD:
+            r = rbd_aio_discard(s->image, offset, bytes, c);
+        case RBD_AIO_FLUSH:
+            r = rbd_aio_flush(s->image, c);
+        or  r = rbd_aio_write_zeroes(s->image, offset, bytes, c, zero_flags, 0);
+
+
+
+
+
+storage-daemon/qemu-storage-daemon.c
+int main(int argc, char *argv[])
+    qemu_init_exec_dir(argv[0])
+    os_setup_signal_handling()
+    process_options(argc, argv, true) <- --export vduse-blk,id=vduse1,name=vduse1,num-queues=1,node-name=qcow2,writable=on
+        case OPTION_EXPORT
+            qmp_block_export_add
+                blk_exp_add
+                    blk_exp_find_driver
+                        for (i = 0; i < ARRAY_SIZE(blk_exp_drivers); i++)
+    bdrv_init
+    init_qmp_commands
+    qemu_init_main_loop(&error_fatal)
+    process_options(argc, argv, false)
+    pid_file_init
+    os_setup_post
+    main_loop_wait(false)
+    blk_exp_close_all
+
+
+
+
+
+static const BlockExportDriver *blk_exp_drivers[] = {
+    &blk_exp_nbd,
+#ifdef CONFIG_VHOST_USER_BLK_SERVER
+    &blk_exp_vhost_user_blk,
+#endif
+#ifdef CONFIG_FUSE
+    &blk_exp_fuse,
+#endif
+#ifdef CONFIG_VDUSE_BLK_EXPORT
+    &blk_exp_vduse_blk,
+#endif
+};
+
+const BlockExportDriver blk_exp_vduse_blk = {
+    .type               = BLOCK_EXPORT_TYPE_VDUSE_BLK,
+    .instance_size      = sizeof(VduseBlkExport),
+    .create             = vduse_blk_exp_create,
+        config.capacity = cpu_to_le64(blk_getlength(exp->blk) >> VIRTIO_BLK_SECTOR_BITS)
+        vblk_exp->dev = vduse_dev_create(vblk_opts->name, VIRTIO_ID_BLOCK, 0,features, num_queues,sizeof(struct virtio_blk_config),(char *)&config, &vduse_blk_ops,vblk_exp)
+        subprojects/libvduse/libvduse.c
+            ioctl(ctrl_fd, VDUSE_CREATE_DEV, dev_config)
+        vduse_dev_setup_queue(vblk_exp->dev, i, queue_size)
+        aio_set_fd_handler(exp->ctx, vduse_dev_get_fd(vblk_exp->dev), on_vduse_dev_kick, NULL, NULL, NULL, vblk_exp->dev)
+            vduse_dev_handler
+                ret = read(dev->fd, &req, sizeof(req))
+                switch (req.type)
+                case VDUSE_GET_VQ_STATE
+                    resp.vq_state.split.avail_index = vq->last_avail_idx
+                case VDUSE_SET_STATUS
+                    VIRTIO_CONFIG_S_DRIVER_OK
+                        vduse_dev_start_dataplane
+                            ioctl(dev->fd, VDUSE_DEV_GET_FEATURES, &dev->features)
+                            vduse_queue_enable(&dev->vqs[i])
+                                ioctl(dev->fd, VDUSE_VQ_GET_INFO, &vq_info)
+                                vq->vring.num = vq_info.num;
+                                vq->vring.desc_addr = vq_info.desc_addr;
+                                vq->vring.avail_addr = vq_info.driver_addr
+                                vq->vring.used_addr = vq_info.device_addr;
+                                vduse_queue_update_vring(vq, vq_info.desc_addr, vq_info.driver_addr, vq_info.device_addr)
+                                    vq->vring.desc = iova_to_va(dev, &len, desc_addr)
+                                    vq->vring.avail = iova_to_va(dev, &len, avail_addr)
+                                    vq->vring.used = iova_to_va(dev, &len, used_addr)
+                                fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC)
+                                ioctl(dev->fd, VDUSE_VQ_SETUP_KICKFD, &vq_eventfd)
+                                vduse_queue_check_inflights
+                                dev->ops->enable_queue(dev, vq)
+                    else
+                        vduse_dev_stop_dataplane
+                case VDUSE_UPDATE_IOTLB
+                    vduse_iova_remove_region
+                    vduse_queue_update_vring
+                ret = write(dev->fd, &resp, sizeof(resp))
+        blk_add_aio_context_notifier(exp->blk, blk_aio_attached, blk_aio_detach, vblk_exp)
+        blk_set_dev_ops(exp->blk, &vduse_block_ops, exp)
+        blk_set_disable_request_queuing(exp->blk, true)
+    .delete             = vduse_blk_exp_delete,
+    .request_shutdown   = vduse_blk_exp_request_shutdown,
+};
+
+
+
+static const VduseOps vduse_blk_ops = {
+    .enable_queue = vduse_blk_enable_queue,
+        aio_set_fd_handler(vblk_exp->export.ctx, vduse_queue_get_fd(vq), on_vduse_vq_kick, NULL, NULL, NULL, vq)
+            on_vduse_vq_kick
+                vduse_blk_vq_handler(dev, vq)
+                    while (1)
+                        vduse_queue_pop(vq, sizeof(VduseBlkReq))
+                        Coroutine *co = qemu_coroutine_create(vduse_blk_virtio_process_req, req)
+                            in_len = virtio_blk_process_req(handler, in_iov, out_iov, in_num, out_num)
+                                case VIRTIO_BLK_T_IN:
+                                case VIRTIO_BLK_T_OUT
+                                    if (is_write)
+                                        qemu_iovec_init_external(&qiov, out_iov, out_num);
+                                    else read
+                                        qemu_iovec_init_external(&qiov, in_iov, in_num)
+                                    write -> ret = blk_co_pwritev(blk, offset, qiov.size, &qiov, 0)
+                                        blk_co_pwritev_part
+                                            blk_co_do_pwritev_part
+                                    read -> ret = blk_co_preadv(blk, offset, qiov.size, &qiov, 0)
+                                case VIRTIO_BLK_T_WRITE_ZEROES
+                                    in->status = virtio_blk_discard_write_zeroes(handler, out_iov, out_num, type)
+                            vduse_blk_req_complete(req, in_len)
+                            vduse_blk_inflight_dec(vblk_exp)
+                        vduse_blk_inflight_inc(vblk_exp)
+                        qemu_coroutine_enter(co)
+        eventfd_write(vduse_queue_get_fd(vq), 1)
+    .disable_queue = vduse_blk_disable_queue,
+};
 
