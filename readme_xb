@@ -1268,6 +1268,12 @@ const VhostOps vdpa_ops = {
                     .region_del = vhost_vdpa_listener_region_del,
                 };
             vhost_vdpa_init_svq(dev, v)
+                shadow_vqs = g_ptr_array_new_full(hdev->nvqs, vhost_svq_free)
+                for (unsigned n = 0; n < hdev->nvqs; ++n)
+                    svq = vhost_svq_new(v->shadow_vq_ops, v->shadow_vq_ops_opaque)
+                        svq->ops = ops
+                    g_ptr_array_add(shadow_vqs, svq)
+                v->shadow_vqs = g_steal_pointer(&shadow_vqs)
             vhost_vdpa_get_dev_features(dev, &features) -> vhost_vdpa_call(dev, VHOST_GET_FEATURES, features)
             ram_block_discard_disable(true)
             vhost_vdpa_add_status(dev, VIRTIO_CONFIG_S_ACKNOWLEDGE | VIRTIO_CONFIG_S_DRIVER) -> vhost_vdpa_call(dev, VHOST_VDPA_SET_STATUS, &s)
@@ -1494,7 +1500,7 @@ vhost_scsi_realize
         limit = hdev->vhost_ops->vhost_backend_memslots_limit(hdev)
         vhost_virtqueue_init
             dev->vhost_ops->vhost_set_vring_call(dev, &file) -> vhost_user_set_vring_call
-        hdev->memory_listener = (MemoryListener) {
+        hdev->memory_listener = (MemoryListener) { -> 当修改地址空间的映射规则的时候，有时候需要执行一下 hook 函数，最典型的就是 kvm 添加了一个 ram 的时候，这个时候是需要通知内核的 kvm 模块的， 而 tcg 的地址空间是纯粹软件模拟，就无需注册这个 hook MemoryListener 的还有一个主要功能是 dirty memory 的记录, kvm 依赖内核模块，所以总是需要执行一下对应的通知内核操作
             .name = "vhost",
             .begin = vhost_begin,
             .commit = vhost_commit,
@@ -1952,6 +1958,7 @@ vhost_user_set_vring_enable
 const VhostOps kernel_ops = {
         .backend_type = VHOST_BACKEND_TYPE_KERNEL,
         .vhost_backend_init = vhost_kernel_init,
+            dev->opaque = opaque
         .vhost_backend_cleanup = vhost_kernel_cleanup,
         .vhost_backend_memslots_limit = vhost_kernel_memslots_limit,
         .vhost_net_set_backend = vhost_kernel_net_set_backend,
@@ -1977,6 +1984,7 @@ const VhostOps kernel_ops = {
         .vhost_free_worker = vhost_kernel_free_worker,
         .vhost_set_features = vhost_kernel_set_features,
         .vhost_get_features = vhost_kernel_get_features,
+            vhost_kernel_call(dev, VHOST_GET_FEATURES, features)
         .vhost_set_backend_cap = vhost_kernel_set_backend_cap,
         .vhost_set_owner = vhost_kernel_set_owner,
         .vhost_get_vq_index = vhost_kernel_get_vq_index,
@@ -2719,7 +2727,14 @@ net_init_vhost_vdpa
             s->cvq_cmd_out_buffer = mmap(NULL, vhost_vdpa_net_cvq_cmd_page_len(), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0)
             s->status = mmap(NULL, vhost_vdpa_net_cvq_cmd_page_len(), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0)
             s->vhost_vdpa.shadow_vq_ops = &vhost_vdpa_net_svq_ops
-                .avail_handler = vhost_vdpa_net_handle_ctrl_avail
+                .avail_handler = vhost_vdpa_net_handle_ctrl_avail -> Validate and copy control virtqueue commands
+                    out.iov_len = iov_to_buf
+                    vhost_vdpa_net_excessive_mac_filter_cvq_add
+                    else
+                        vhost_vdpa_net_cvq_add
+                        vhost_vdpa_net_svq_poll
+                    virtio_net_handle_ctrl_iov
+                    vhost_svq_push_elem
         vhost_vdpa_add(nc, (void *)&s->vhost_vdpa, queue_pair_index, nvqs)
             options.backend_type = VHOST_BACKEND_TYPE_VDPA
             net = vhost_net_init(&options)
@@ -2864,7 +2879,7 @@ static void vhost_vdpa_device_class_init(ObjectClass *klass, void *data)
         vhost_dev_get_config(&v->dev, v->config, v->config_size, NULL)
         virtio_init(vdev, v->vdev_id, v->config_size)
         for (i = 0; i < v->dev.nvqs; i++)
-            v->virtqs[i] = virtio_add_queue(vdev, v->queue_size, vhost_vdpa_device_dummy_handle_output)
+            v->virtqs[i] = virtio_add_queue(vdev, v->queue_size, vhost_vdpa_device_dummy_handle_output) -> No IMPL
     vdc->unrealize = vhost_vdpa_device_unrealize;
     vdc->get_config = vhost_vdpa_device_get_config;
     vdc->set_config = vhost_vdpa_device_set_config;
@@ -3437,4 +3452,536 @@ static const VduseOps vduse_blk_ops = {
         eventfd_write(vduse_queue_get_fd(vq), 1)
     .disable_queue = vduse_blk_disable_queue,
 };
+
+
+
+
+qemu内存模型:
+ ┌──────────► 这是一个 AddressSpace，AddressSpace 用于描述整个地址空间的映射关系。
+ │                                        ┌───────────────────────► MemoryRegion 的优先级，如果一个范围两个 MemoryRegion 出现重叠，优先级高的压制优先级低的
+ │                                        │
+ │                                        │   ┌───────────────────► 表示这个空间的类型，一般划分为 io 和 RAM
+ │                                        │   │    ┌──────────────► 这是一个 MemoryRegion，这是 Address Space 中最核心的概念，MemoryRegion 用于描述一个范围内的映射规则
+address-space: memory                     │   │    │
+  0000000000000000-ffffffffffffffff (prio 0, i/o): system
+  0000000000000000-ffffffffffffffff (prio 0, i/o): system
+    0000000000000000-00000000bfffffff (prio 0, ram): alias ram-below-4g @pc.ram 0000000000000000-00000000bfffffff ──────────────┐
+    0000000000000000-ffffffffffffffff (prio -1, i/o): pci                                                                       │
+      00000000000a0000-00000000000bffff (prio 1, i/o): vga-lowmem                                                               │
+      00000000000c0000-00000000000dffff (prio 1, rom): pc.rom                                                                   │
+      00000000000e0000-00000000000fffff (prio 1, rom): alias isa-bios @pc.bios 0000000000020000-000000000003ffff                │
+      00000000fd000000-00000000fdffffff (prio 1, ram): vga.vram                                                                 │
+      00000000fe000000-00000000fe003fff (prio 1, i/o): virtio-pci                                                               │
+        00000000fe000000-00000000fe000fff (prio 0, i/o): virtio-pci-common-virtio-9p                                            │
+        00000000fe001000-00000000fe001fff (prio 0, i/o): virtio-pci-isr-virtio-9p                                               │
+        00000000fe002000-00000000fe002fff (prio 0, i/o): virtio-pci-device-virtio-9p                                            │
+        00000000fe003000-00000000fe003fff (prio 0, i/o): virtio-pci-notify-virtio-9p                                            │
+      00000000febc0000-00000000febdffff (prio 1, i/o): e1000-mmio                                                               │
+      00000000febf0000-00000000febf3fff (prio 1, i/o): nvme-bar0                                                                │
+        00000000febf0000-00000000febf1fff (prio 0, i/o): nvme                                                                   │
+        00000000febf2000-00000000febf240f (prio 0, i/o): msix-table                                                             │
+        00000000febf3000-00000000febf300f (prio 0, i/o): msix-pba                                                               │
+      00000000febf4000-00000000febf7fff (prio 1, i/o): nvme-bar0                                                                │
+        00000000febf4000-00000000febf5fff (prio 0, i/o): nvme                                                                   │
+        00000000febf6000-00000000febf640f (prio 0, i/o): msix-table                                                             │
+        00000000febf7000-00000000febf700f (prio 0, i/o): msix-pba                                                               │
+      00000000febf8000-00000000febf8fff (prio 1, i/o): vga.mmio                                                                 │
+        00000000febf8000-00000000febf817f (prio 0, i/o): edid                                                                   └── ram-below-4g 是 pc.ram 的一个 alias
+        00000000febf8400-00000000febf841f (prio 0, i/o): vga ioports remapped
+        00000000febf8500-00000000febf8515 (prio 0, i/o): bochs dispi interface                                                  ┌── ram-above-4g 也是 pc.ram 的一个 alias, 两者都被放到 system 这个 MemoryRegion 上
+        00000000febf8600-00000000febf8607 (prio 0, i/o): qemu extended regs                                                     │
+      00000000febf9000-00000000febf9fff (prio 1, i/o): virtio-9p-pci-msix                                                       │
+        00000000febf9000-00000000febf901f (prio 0, i/o): msix-table                                                             │
+        00000000febf9800-00000000febf9807 (prio 0, i/o): msix-pba                                                               │
+      00000000fffc0000-00000000ffffffff (prio 0, rom): pc.bios                                                                  │
+    00000000000a0000-00000000000bffff (prio 1, i/o): alias smram-region @pci 00000000000a0000-00000000000bffff                  │
+    00000000000c0000-00000000000c3fff (prio 1, ram): alias pam-rom @pc.ram 00000000000c0000-00000000000c3fff                    │
+    00000000000c4000-00000000000c7fff (prio 1, ram): alias pam-rom @pc.ram 00000000000c4000-00000000000c7fff                    │
+    00000000000c8000-00000000000cbfff (prio 1, ram): alias pam-rom @pc.ram 00000000000c8000-00000000000cbfff                    │
+    00000000000cb000-00000000000cdfff (prio 1000, ram): alias kvmvapic-rom @pc.ram 00000000000cb000-00000000000cdfff            │
+    00000000000cc000-00000000000cffff (prio 1, ram): alias pam-rom @pc.ram 00000000000cc000-00000000000cffff                    │
+    00000000000d0000-00000000000d3fff (prio 1, ram): alias pam-rom @pc.ram 00000000000d0000-00000000000d3fff                    │
+    00000000000d4000-00000000000d7fff (prio 1, ram): alias pam-rom @pc.ram 00000000000d4000-00000000000d7fff                    │
+    00000000000d8000-00000000000dbfff (prio 1, ram): alias pam-rom @pc.ram 00000000000d8000-00000000000dbfff                    │
+    00000000000dc000-00000000000dffff (prio 1, ram): alias pam-rom @pc.ram 00000000000dc000-00000000000dffff                    │
+    00000000000e0000-00000000000e3fff (prio 1, ram): alias pam-rom @pc.ram 00000000000e0000-00000000000e3fff                    │
+    00000000000e4000-00000000000e7fff (prio 1, ram): alias pam-ram @pc.ram 00000000000e4000-00000000000e7fff                    │
+    00000000000e8000-00000000000ebfff (prio 1, ram): alias pam-ram @pc.ram 00000000000e8000-00000000000ebfff                    │
+    00000000000ec000-00000000000effff (prio 1, ram): alias pam-ram @pc.ram 00000000000ec000-00000000000effff                    │
+    00000000000f0000-00000000000fffff (prio 1, ram): alias pam-rom @pc.ram 00000000000f0000-00000000000fffff                    │
+    00000000fec00000-00000000fec00fff (prio 0, i/o): ioapic                                                                     │
+    00000000fed00000-00000000fed003ff (prio 0, i/o): hpet                                                                       │
+    00000000fee00000-00000000feefffff (prio 4096, i/o): apic-msi                                                                │
+    0000000100000000-00000001bfffffff (prio 0, ram): alias ram-above-4g @pc.ram 00000000c0000000-000000017fffffff ──────────────┘
+
+完整版:
+https://martins3.github.io/qemu/memory/memory-model-tcg.txt
+address-space: memory
+    0000000000000000-ffffffffffffffff (prio 0, i/o): system
+    0000000000000000-00000000bfffffff (prio 0, ram): alias ram-below-4g @pc.ram 0000000000000000-00000000bfffffff
+    0000000000000000-ffffffffffffffff (prio -1, i/o): pci
+    00000000000a0000-00000000000bffff (prio 1, i/o): vga-lowmem
+    00000000000c0000-00000000000dffff (prio 1, rom): pc.rom
+    00000000000e0000-00000000000fffff (prio 1, rom): alias isa-bios @pc.bios 0000000000020000-000000000003ffff
+    00000000fd000000-00000000fdffffff (prio 1, ram): vga.vram
+    00000000fe000000-00000000fe003fff (prio 1, i/o): virtio-pci
+    00000000fe000000-00000000fe000fff (prio 0, i/o): virtio-pci-common-virtio-9p
+    00000000fe001000-00000000fe001fff (prio 0, i/o): virtio-pci-isr-virtio-9p
+    00000000fe002000-00000000fe002fff (prio 0, i/o): virtio-pci-device-virtio-9p
+    00000000fe003000-00000000fe003fff (prio 0, i/o): virtio-pci-notify-virtio-9p
+    00000000febc0000-00000000febdffff (prio 1, i/o): e1000-mmio
+    00000000febf0000-00000000febf3fff (prio 1, i/o): nvme-bar0
+    00000000febf0000-00000000febf1fff (prio 0, i/o): nvme
+    00000000febf2000-00000000febf240f (prio 0, i/o): msix-table
+    00000000febf3000-00000000febf300f (prio 0, i/o): msix-pba
+    00000000febf4000-00000000febf4fff (prio 1, i/o): vga.mmio
+    00000000febf4000-00000000febf417f (prio 0, i/o): edid
+    00000000febf4400-00000000febf441f (prio 0, i/o): vga ioports remapped
+    00000000febf4500-00000000febf4515 (prio 0, i/o): bochs dispi interface
+    00000000febf4600-00000000febf4607 (prio 0, i/o): qemu extended regs
+    00000000febf5000-00000000febf5fff (prio 1, i/o): virtio-9p-pci-msix
+    00000000febf5000-00000000febf501f (prio 0, i/o): msix-table
+    00000000febf5800-00000000febf5807 (prio 0, i/o): msix-pba
+    00000000fffc0000-00000000ffffffff (prio 0, rom): pc.bios
+    00000000000a0000-00000000000bffff (prio 1, i/o): alias smram-region @pci 00000000000a0000-00000000000bffff
+    00000000000c0000-00000000000c3fff (prio 1, ram): alias pam-rom @pc.ram 00000000000c0000-00000000000c3fff
+    00000000000c4000-00000000000c7fff (prio 1, ram): alias pam-rom @pc.ram 00000000000c4000-00000000000c7fff
+    00000000000c8000-00000000000cbfff (prio 1, ram): alias pam-rom @pc.ram 00000000000c8000-00000000000cbfff
+    00000000000cb000-00000000000cdfff (prio 1000, ram): alias kvmvapic-rom @pc.ram 00000000000cb000-00000000000cdfff
+    00000000000cc000-00000000000cffff (prio 1, ram): alias pam-rom @pc.ram 00000000000cc000-00000000000cffff
+    00000000000d0000-00000000000d3fff (prio 1, ram): alias pam-rom @pc.ram 00000000000d0000-00000000000d3fff
+    00000000000d4000-00000000000d7fff (prio 1, ram): alias pam-rom @pc.ram 00000000000d4000-00000000000d7fff
+    00000000000d8000-00000000000dbfff (prio 1, ram): alias pam-rom @pc.ram 00000000000d8000-00000000000dbfff
+    00000000000dc000-00000000000dffff (prio 1, ram): alias pam-rom @pc.ram 00000000000dc000-00000000000dffff
+    00000000000e0000-00000000000e3fff (prio 1, ram): alias pam-rom @pc.ram 00000000000e0000-00000000000e3fff
+    00000000000e4000-00000000000e7fff (prio 1, ram): alias pam-ram @pc.ram 00000000000e4000-00000000000e7fff
+    00000000000e8000-00000000000ebfff (prio 1, ram): alias pam-ram @pc.ram 00000000000e8000-00000000000ebfff
+    00000000000ec000-00000000000effff (prio 1, ram): alias pam-ram @pc.ram 00000000000ec000-00000000000effff
+    00000000000f0000-00000000000fffff (prio 1, ram): alias pam-rom @pc.ram 00000000000f0000-00000000000fffff
+    00000000fec00000-00000000fec00fff (prio 0, i/o): ioapic
+    00000000fed00000-00000000fed003ff (prio 0, i/o): hpet
+    00000000fee00000-00000000feefffff (prio 4096, i/o): apic-msi
+    0000000100000000-00000001bfffffff (prio 0, ram): alias ram-above-4g @pc.ram 00000000c0000000-000000017fffffff
+
+address-space: I/O
+    0000000000000000-000000000000ffff (prio 0, i/o): io
+    0000000000000000-0000000000000007 (prio 0, i/o): dma-chan
+    0000000000000008-000000000000000f (prio 0, i/o): dma-cont
+    0000000000000020-0000000000000021 (prio 0, i/o): pic
+    0000000000000040-0000000000000043 (prio 0, i/o): pit
+    0000000000000060-0000000000000060 (prio 0, i/o): i8042-data
+    0000000000000061-0000000000000061 (prio 0, i/o): pcspk
+    0000000000000064-0000000000000064 (prio 0, i/o): i8042-cmd
+    0000000000000070-0000000000000071 (prio 0, i/o): rtc
+    0000000000000070-0000000000000070 (prio 0, i/o): rtc-index
+    000000000000007e-000000000000007f (prio 0, i/o): kvmvapic
+    0000000000000080-0000000000000080 (prio 0, i/o): ioport80
+    0000000000000081-0000000000000083 (prio 0, i/o): dma-page
+    0000000000000087-0000000000000087 (prio 0, i/o): dma-page
+    0000000000000089-000000000000008b (prio 0, i/o): dma-page
+    000000000000008f-000000000000008f (prio 0, i/o): dma-page
+    0000000000000092-0000000000000092 (prio 0, i/o): port92
+    00000000000000a0-00000000000000a1 (prio 0, i/o): pic
+    00000000000000b2-00000000000000b3 (prio 0, i/o): apm-io
+    00000000000000c0-00000000000000cf (prio 0, i/o): dma-chan
+    00000000000000d0-00000000000000df (prio 0, i/o): dma-cont
+    00000000000000f0-00000000000000f0 (prio 0, i/o): ioportF0
+    0000000000000170-0000000000000177 (prio 0, i/o): ide
+    00000000000001ce-00000000000001d1 (prio 0, i/o): vbe
+    00000000000001f0-00000000000001f7 (prio 0, i/o): ide
+    0000000000000376-0000000000000376 (prio 0, i/o): ide
+    0000000000000378-000000000000037f (prio 0, i/o): parallel
+    00000000000003b4-00000000000003b5 (prio 0, i/o): vga
+    00000000000003ba-00000000000003ba (prio 0, i/o): vga
+    00000000000003c0-00000000000003cf (prio 0, i/o): vga
+    00000000000003d4-00000000000003d5 (prio 0, i/o): vga
+    00000000000003da-00000000000003da (prio 0, i/o): vga
+    00000000000003f1-00000000000003f5 (prio 0, i/o): fdc
+    00000000000003f6-00000000000003f6 (prio 0, i/o): ide
+    00000000000003f7-00000000000003f7 (prio 0, i/o): fdc
+    00000000000003f8-00000000000003ff (prio 0, i/o): serial
+    0000000000000402-0000000000000402 (prio 0, i/o): isa-debugcon
+    00000000000004d0-00000000000004d0 (prio 0, i/o): elcr
+    00000000000004d1-00000000000004d1 (prio 0, i/o): elcr
+    0000000000000510-0000000000000511 (prio 0, i/o): fwcfg
+    0000000000000514-000000000000051b (prio 0, i/o): fwcfg.dma
+    0000000000000600-000000000000063f (prio 0, i/o): piix4-pm
+      0000000000000600-0000000000000603 (prio 0, i/o): acpi-evt
+      0000000000000604-0000000000000605 (prio 0, i/o): acpi-cnt
+      0000000000000608-000000000000060b (prio 0, i/o): acpi-tmr
+    0000000000000700-000000000000073f (prio 0, i/o): pm-smbus
+    0000000000000cf8-0000000000000cfb (prio 0, i/o): pci-conf-idx
+    0000000000000cf9-0000000000000cf9 (prio 1, i/o): piix3-reset-control
+    0000000000000cfc-0000000000000cff (prio 0, i/o): pci-conf-data
+    0000000000005658-0000000000005658 (prio 0, i/o): vmport
+    000000000000ae00-000000000000ae17 (prio 0, i/o): acpi-pci-hotplug
+    000000000000af00-000000000000af1f (prio 0, i/o): acpi-cpu-hotplug
+    000000000000afe0-000000000000afe3 (prio 0, i/o): acpi-gpe0
+    000000000000c000-000000000000c03f (prio 1, i/o): e1000-io
+    000000000000c040-000000000000c05f (prio 1, i/o): virtio-pci
+    000000000000c060-000000000000c06f (prio 1, i/o): piix-bmdma-container
+      000000000000c060-000000000000c063 (prio 0, i/o): piix-bmdma
+      000000000000c064-000000000000c067 (prio 0, i/o): bmdma
+      000000000000c068-000000000000c06b (prio 0, i/o): piix-bmdma
+      000000000000c06c-000000000000c06f (prio 0, i/o): bmdma
+
+address-space: cpu-memory-0
+  0000000000000000-ffffffffffffffff (prio 0, i/o): system
+    0000000000000000-00000000bfffffff (prio 0, ram): alias ram-below-4g @pc.ram 0000000000000000-00000000bfffffff
+    0000000000000000-ffffffffffffffff (prio -1, i/o): pci
+      00000000000a0000-00000000000bffff (prio 1, i/o): vga-lowmem
+      00000000000c0000-00000000000dffff (prio 1, rom): pc.rom
+      00000000000e0000-00000000000fffff (prio 1, rom): alias isa-bios @pc.bios 0000000000020000-000000000003ffff
+      00000000fd000000-00000000fdffffff (prio 1, ram): vga.vram
+      00000000fe000000-00000000fe003fff (prio 1, i/o): virtio-pci
+        00000000fe000000-00000000fe000fff (prio 0, i/o): virtio-pci-common-virtio-9p
+        00000000fe001000-00000000fe001fff (prio 0, i/o): virtio-pci-isr-virtio-9p
+        00000000fe002000-00000000fe002fff (prio 0, i/o): virtio-pci-device-virtio-9p
+        00000000fe003000-00000000fe003fff (prio 0, i/o): virtio-pci-notify-virtio-9p
+      00000000febc0000-00000000febdffff (prio 1, i/o): e1000-mmio
+      00000000febf0000-00000000febf3fff (prio 1, i/o): nvme-bar0
+        00000000febf0000-00000000febf1fff (prio 0, i/o): nvme
+        00000000febf2000-00000000febf240f (prio 0, i/o): msix-table
+        00000000febf3000-00000000febf300f (prio 0, i/o): msix-pba
+      00000000febf4000-00000000febf4fff (prio 1, i/o): vga.mmio
+        00000000febf4000-00000000febf417f (prio 0, i/o): edid
+        00000000febf4400-00000000febf441f (prio 0, i/o): vga ioports remapped
+        00000000febf4500-00000000febf4515 (prio 0, i/o): bochs dispi interface
+        00000000febf4600-00000000febf4607 (prio 0, i/o): qemu extended regs
+      00000000febf5000-00000000febf5fff (prio 1, i/o): virtio-9p-pci-msix
+        00000000febf5000-00000000febf501f (prio 0, i/o): msix-table
+        00000000febf5800-00000000febf5807 (prio 0, i/o): msix-pba
+      00000000fffc0000-00000000ffffffff (prio 0, rom): pc.bios
+    00000000000a0000-00000000000bffff (prio 1, i/o): alias smram-region @pci 00000000000a0000-00000000000bffff
+    00000000000c0000-00000000000c3fff (prio 1, ram): alias pam-rom @pc.ram 00000000000c0000-00000000000c3fff
+    00000000000c4000-00000000000c7fff (prio 1, ram): alias pam-rom @pc.ram 00000000000c4000-00000000000c7fff
+    00000000000c8000-00000000000cbfff (prio 1, ram): alias pam-rom @pc.ram 00000000000c8000-00000000000cbfff
+    00000000000cb000-00000000000cdfff (prio 1000, ram): alias kvmvapic-rom @pc.ram 00000000000cb000-00000000000cdfff
+    00000000000cc000-00000000000cffff (prio 1, ram): alias pam-rom @pc.ram 00000000000cc000-00000000000cffff
+    00000000000d0000-00000000000d3fff (prio 1, ram): alias pam-rom @pc.ram 00000000000d0000-00000000000d3fff
+    00000000000d4000-00000000000d7fff (prio 1, ram): alias pam-rom @pc.ram 00000000000d4000-00000000000d7fff
+    00000000000d8000-00000000000dbfff (prio 1, ram): alias pam-rom @pc.ram 00000000000d8000-00000000000dbfff
+    00000000000dc000-00000000000dffff (prio 1, ram): alias pam-rom @pc.ram 00000000000dc000-00000000000dffff
+    00000000000e0000-00000000000e3fff (prio 1, ram): alias pam-rom @pc.ram 00000000000e0000-00000000000e3fff
+    00000000000e4000-00000000000e7fff (prio 1, ram): alias pam-ram @pc.ram 00000000000e4000-00000000000e7fff
+    00000000000e8000-00000000000ebfff (prio 1, ram): alias pam-ram @pc.ram 00000000000e8000-00000000000ebfff
+    00000000000ec000-00000000000effff (prio 1, ram): alias pam-ram @pc.ram 00000000000ec000-00000000000effff
+    00000000000f0000-00000000000fffff (prio 1, ram): alias pam-rom @pc.ram 00000000000f0000-00000000000fffff
+    00000000fec00000-00000000fec00fff (prio 0, i/o): ioapic
+    00000000fed00000-00000000fed003ff (prio 0, i/o): hpet
+    00000000fee00000-00000000feefffff (prio 4096, i/o): apic-msi
+    0000000100000000-00000001bfffffff (prio 0, ram): alias ram-above-4g @pc.ram 00000000c0000000-000000017fffffff
+
+address-space: cpu-smm-0
+  0000000000000000-ffffffffffffffff (prio 0, i/o): memory
+    0000000000000000-00000000ffffffff (prio 1, i/o): alias smram @smram 0000000000000000-00000000ffffffff
+    0000000000000000-ffffffffffffffff (prio 0, i/o): alias memory @system 0000000000000000-ffffffffffffffff
+
+address-space: cpu-memory-1
+  0000000000000000-ffffffffffffffff (prio 0, i/o): system
+    0000000000000000-00000000bfffffff (prio 0, ram): alias ram-below-4g @pc.ram 0000000000000000-00000000bfffffff
+    0000000000000000-ffffffffffffffff (prio -1, i/o): pci
+      00000000000a0000-00000000000bffff (prio 1, i/o): vga-lowmem
+      00000000000c0000-00000000000dffff (prio 1, rom): pc.rom
+      00000000000e0000-00000000000fffff (prio 1, rom): alias isa-bios @pc.bios 0000000000020000-000000000003ffff
+      00000000fd000000-00000000fdffffff (prio 1, ram): vga.vram
+      00000000fe000000-00000000fe003fff (prio 1, i/o): virtio-pci
+        00000000fe000000-00000000fe000fff (prio 0, i/o): virtio-pci-common-virtio-9p
+        00000000fe001000-00000000fe001fff (prio 0, i/o): virtio-pci-isr-virtio-9p
+        00000000fe002000-00000000fe002fff (prio 0, i/o): virtio-pci-device-virtio-9p
+        00000000fe003000-00000000fe003fff (prio 0, i/o): virtio-pci-notify-virtio-9p
+      00000000febc0000-00000000febdffff (prio 1, i/o): e1000-mmio
+      00000000febf0000-00000000febf3fff (prio 1, i/o): nvme-bar0
+        00000000febf0000-00000000febf1fff (prio 0, i/o): nvme
+        00000000febf2000-00000000febf240f (prio 0, i/o): msix-table
+        00000000febf3000-00000000febf300f (prio 0, i/o): msix-pba
+      00000000febf4000-00000000febf4fff (prio 1, i/o): vga.mmio
+        00000000febf4000-00000000febf417f (prio 0, i/o): edid
+        00000000febf4400-00000000febf441f (prio 0, i/o): vga ioports remapped
+        00000000febf4500-00000000febf4515 (prio 0, i/o): bochs dispi interface
+        00000000febf4600-00000000febf4607 (prio 0, i/o): qemu extended regs
+      00000000febf5000-00000000febf5fff (prio 1, i/o): virtio-9p-pci-msix
+        00000000febf5000-00000000febf501f (prio 0, i/o): msix-table
+        00000000febf5800-00000000febf5807 (prio 0, i/o): msix-pba
+      00000000fffc0000-00000000ffffffff (prio 0, rom): pc.bios
+    00000000000a0000-00000000000bffff (prio 1, i/o): alias smram-region @pci 00000000000a0000-00000000000bffff
+    00000000000c0000-00000000000c3fff (prio 1, ram): alias pam-rom @pc.ram 00000000000c0000-00000000000c3fff
+    00000000000c4000-00000000000c7fff (prio 1, ram): alias pam-rom @pc.ram 00000000000c4000-00000000000c7fff
+    00000000000c8000-00000000000cbfff (prio 1, ram): alias pam-rom @pc.ram 00000000000c8000-00000000000cbfff
+    00000000000cb000-00000000000cdfff (prio 1000, ram): alias kvmvapic-rom @pc.ram 00000000000cb000-00000000000cdfff
+    00000000000cc000-00000000000cffff (prio 1, ram): alias pam-rom @pc.ram 00000000000cc000-00000000000cffff
+    00000000000d0000-00000000000d3fff (prio 1, ram): alias pam-rom @pc.ram 00000000000d0000-00000000000d3fff
+    00000000000d4000-00000000000d7fff (prio 1, ram): alias pam-rom @pc.ram 00000000000d4000-00000000000d7fff
+    00000000000d8000-00000000000dbfff (prio 1, ram): alias pam-rom @pc.ram 00000000000d8000-00000000000dbfff
+    00000000000dc000-00000000000dffff (prio 1, ram): alias pam-rom @pc.ram 00000000000dc000-00000000000dffff
+    00000000000e0000-00000000000e3fff (prio 1, ram): alias pam-rom @pc.ram 00000000000e0000-00000000000e3fff
+    00000000000e4000-00000000000e7fff (prio 1, ram): alias pam-ram @pc.ram 00000000000e4000-00000000000e7fff
+    00000000000e8000-00000000000ebfff (prio 1, ram): alias pam-ram @pc.ram 00000000000e8000-00000000000ebfff
+    00000000000ec000-00000000000effff (prio 1, ram): alias pam-ram @pc.ram 00000000000ec000-00000000000effff
+    00000000000f0000-00000000000fffff (prio 1, ram): alias pam-rom @pc.ram 00000000000f0000-00000000000fffff
+    00000000fec00000-00000000fec00fff (prio 0, i/o): ioapic
+    00000000fed00000-00000000fed003ff (prio 0, i/o): hpet
+    00000000fee00000-00000000feefffff (prio 4096, i/o): apic-msi
+    0000000100000000-00000001bfffffff (prio 0, ram): alias ram-above-4g @pc.ram 00000000c0000000-000000017fffffff
+
+address-space: cpu-smm-1
+  0000000000000000-ffffffffffffffff (prio 0, i/o): memory
+    0000000000000000-00000000ffffffff (prio 1, i/o): alias smram @smram 0000000000000000-00000000ffffffff
+    0000000000000000-ffffffffffffffff (prio 0, i/o): alias memory @system 0000000000000000-ffffffffffffffff
+
+address-space: i440FX
+  0000000000000000-ffffffffffffffff (prio 0, i/o): bus master container
+
+address-space: PIIX3
+  0000000000000000-ffffffffffffffff (prio 0, i/o): bus master container
+
+address-space: VGA
+  0000000000000000-ffffffffffffffff (prio 0, i/o): bus master container
+
+address-space: e1000
+  0000000000000000-ffffffffffffffff (prio 0, i/o): bus master container
+
+address-space: piix3-ide
+  0000000000000000-ffffffffffffffff (prio 0, i/o): bus master container
+
+address-space: PIIX4_PM
+  0000000000000000-ffffffffffffffff (prio 0, i/o): bus master container
+
+address-space: nvme
+  0000000000000000-ffffffffffffffff (prio 0, i/o): bus master container
+    0000000000000000-ffffffffffffffff (prio 0, i/o): alias bus master @system 0000000000000000-ffffffffffffffff
+
+address-space: virtio-9p-pci
+  0000000000000000-ffffffffffffffff (prio 0, i/o): bus master container
+
+memory-region: pc.ram
+  0000000000000000-000000017fffffff (prio 0, ram): pc.ram
+
+memory-region: pc.bios
+  00000000fffc0000-00000000ffffffff (prio 0, rom): pc.bios
+
+memory-region: pci
+  0000000000000000-ffffffffffffffff (prio -1, i/o): pci
+    00000000000a0000-00000000000bffff (prio 1, i/o): vga-lowmem
+    00000000000c0000-00000000000dffff (prio 1, rom): pc.rom
+    00000000000e0000-00000000000fffff (prio 1, rom): alias isa-bios @pc.bios 0000000000020000-000000000003ffff
+    00000000fd000000-00000000fdffffff (prio 1, ram): vga.vram
+    00000000fe000000-00000000fe003fff (prio 1, i/o): virtio-pci
+      00000000fe000000-00000000fe000fff (prio 0, i/o): virtio-pci-common-virtio-9p
+      00000000fe001000-00000000fe001fff (prio 0, i/o): virtio-pci-isr-virtio-9p
+      00000000fe002000-00000000fe002fff (prio 0, i/o): virtio-pci-device-virtio-9p
+      00000000fe003000-00000000fe003fff (prio 0, i/o): virtio-pci-notify-virtio-9p
+    00000000febc0000-00000000febdffff (prio 1, i/o): e1000-mmio
+    00000000febf0000-00000000febf3fff (prio 1, i/o): nvme-bar0
+      00000000febf0000-00000000febf1fff (prio 0, i/o): nvme
+      00000000febf2000-00000000febf240f (prio 0, i/o): msix-table
+      00000000febf3000-00000000febf300f (prio 0, i/o): msix-pba
+    00000000febf4000-00000000febf4fff (prio 1, i/o): vga.mmio
+      00000000febf4000-00000000febf417f (prio 0, i/o): edid
+      00000000febf4400-00000000febf441f (prio 0, i/o): vga ioports remapped
+      00000000febf4500-00000000febf4515 (prio 0, i/o): bochs dispi interface
+      00000000febf4600-00000000febf4607 (prio 0, i/o): qemu extended regs
+    00000000febf5000-00000000febf5fff (prio 1, i/o): virtio-9p-pci-msix
+      00000000febf5000-00000000febf501f (prio 0, i/o): msix-table
+      00000000febf5800-00000000febf5807 (prio 0, i/o): msix-pba
+    00000000fffc0000-00000000ffffffff (prio 0, rom): pc.bios
+
+memory-region: smram
+  0000000000000000-00000000ffffffff (prio 0, i/o): smram
+    00000000000a0000-00000000000bffff (prio 0, ram): alias smram-low @pc.ram 00000000000a0000-00000000000bffff
+
+memory-region: system
+  0000000000000000-ffffffffffffffff (prio 0, i/o): system
+    0000000000000000-00000000bfffffff (prio 0, ram): alias ram-below-4g @pc.ram 0000000000000000-00000000bfffffff
+    0000000000000000-ffffffffffffffff (prio -1, i/o): pci
+      00000000000a0000-00000000000bffff (prio 1, i/o): vga-lowmem
+      00000000000c0000-00000000000dffff (prio 1, rom): pc.rom
+      00000000000e0000-00000000000fffff (prio 1, rom): alias isa-bios @pc.bios 0000000000020000-000000000003ffff
+      00000000fd000000-00000000fdffffff (prio 1, ram): vga.vram
+      00000000fe000000-00000000fe003fff (prio 1, i/o): virtio-pci
+        00000000fe000000-00000000fe000fff (prio 0, i/o): virtio-pci-common-virtio-9p
+        00000000fe001000-00000000fe001fff (prio 0, i/o): virtio-pci-isr-virtio-9p
+        00000000fe002000-00000000fe002fff (prio 0, i/o): virtio-pci-device-virtio-9p
+        00000000fe003000-00000000fe003fff (prio 0, i/o): virtio-pci-notify-virtio-9p
+      00000000febc0000-00000000febdffff (prio 1, i/o): e1000-mmio
+      00000000febf0000-00000000febf3fff (prio 1, i/o): nvme-bar0
+        00000000febf0000-00000000febf1fff (prio 0, i/o): nvme
+        00000000febf2000-00000000febf240f (prio 0, i/o): msix-table
+        00000000febf3000-00000000febf300f (prio 0, i/o): msix-pba
+      00000000febf4000-00000000febf4fff (prio 1, i/o): vga.mmio
+        00000000febf4000-00000000febf417f (prio 0, i/o): edid
+        00000000febf4400-00000000febf441f (prio 0, i/o): vga ioports remapped
+        00000000febf4500-00000000febf4515 (prio 0, i/o): bochs dispi interface
+        00000000febf4600-00000000febf4607 (prio 0, i/o): qemu extended regs
+      00000000febf5000-00000000febf5fff (prio 1, i/o): virtio-9p-pci-msix
+        00000000febf5000-00000000febf501f (prio 0, i/o): msix-table
+        00000000febf5800-00000000febf5807 (prio 0, i/o): msix-pba
+      00000000fffc0000-00000000ffffffff (prio 0, rom): pc.bios
+    00000000000a0000-00000000000bffff (prio 1, i/o): alias smram-region @pci 00000000000a0000-00000000000bffff
+    00000000000c0000-00000000000c3fff (prio 1, ram): alias pam-rom @pc.ram 00000000000c0000-00000000000c3fff
+    00000000000c4000-00000000000c7fff (prio 1, ram): alias pam-rom @pc.ram 00000000000c4000-00000000000c7fff
+    00000000000c8000-00000000000cbfff (prio 1, ram): alias pam-rom @pc.ram 00000000000c8000-00000000000cbfff
+    00000000000cb000-00000000000cdfff (prio 1000, ram): alias kvmvapic-rom @pc.ram 00000000000cb000-00000000000cdfff
+    00000000000cc000-00000000000cffff (prio 1, ram): alias pam-rom @pc.ram 00000000000cc000-00000000000cffff
+    00000000000d0000-00000000000d3fff (prio 1, ram): alias pam-rom @pc.ram 00000000000d0000-00000000000d3fff
+    00000000000d4000-00000000000d7fff (prio 1, ram): alias pam-rom @pc.ram 00000000000d4000-00000000000d7fff
+    00000000000d8000-00000000000dbfff (prio 1, ram): alias pam-rom @pc.ram 00000000000d8000-00000000000dbfff
+    00000000000dc000-00000000000dffff (prio 1, ram): alias pam-rom @pc.ram 00000000000dc000-00000000000dffff
+    00000000000e0000-00000000000e3fff (prio 1, ram): alias pam-rom @pc.ram 00000000000e0000-00000000000e3fff
+    00000000000e4000-00000000000e7fff (prio 1, ram): alias pam-ram @pc.ram 00000000000e4000-00000000000e7fff
+    00000000000e8000-00000000000ebfff (prio 1, ram): alias pam-ram @pc.ram 00000000000e8000-00000000000ebfff
+    00000000000ec000-00000000000effff (prio 1, ram): alias pam-ram @pc.ram 00000000000ec000-00000000000effff
+    00000000000f0000-00000000000fffff (prio 1, ram): alias pam-rom @pc.ram 00000000000f0000-00000000000fffff
+    00000000fec00000-00000000fec00fff (prio 0, i/o): ioapic
+    00000000fed00000-00000000fed003ff (prio 0, i/o): hpet
+    00000000fee00000-00000000feefffff (prio 4096, i/o): apic-msi
+    0000000100000000-00000001bfffffff (prio 0, ram): alias ram-above-4g @pc.ram 00000000c0000000-000000017fffffff
+
+(qemu)
+
+
+
+
+内存地址映射对象:
+struct AddressSpace {
+    /* private: */
+    struct rcu_head rcu;
+    char *name;
+    MemoryRegion *root;
+
+    /* Accessed via RCU.  */
+    struct FlatView *current_map;
+
+    int ioeventfd_nb;
+    int ioeventfd_notifiers;
+    struct MemoryRegionIoeventfd *ioeventfds;
+    QTAILQ_HEAD(, MemoryListener) listeners;
+    QTAILQ_ENTRY(AddressSpace) address_spaces_link;
+};
+
+
+static QTAILQ_HEAD(, AddressSpace) address_spaces = QTAILQ_HEAD_INITIALIZER(address_spaces);
+
+main()                              // vl.c
+    cpu_exec_init_all()             // exec.c
+        memory_map_init()           // exec.c
+
+
+struct MemoryRegion {
+    Object parent_obj;
+    bool ram;        //标记是否为ram类型的MR
+    bool readonly;     //For RAM regions，标记是否为ROM类型的MR
+    RAMBlock *ram_block;   //实际申请的物理内存块信息，不为null则关联一段实际内存
+    const MemoryRegionOps *ops;        // 是否为MMIO类型的MR
+    MemoryRegion *container;  //MemoryRegion所属的父容器，当前MR为subregion
+    Int128 size;    //虚机内存的物理地址大小
+    hwaddr addr;    //虚机内存的绝对物理地址
+    bool terminates;   //是否为叶子节点
+    MemoryRegion *alias;  //指向别名所在的MR
+    hwaddr alias_offset;  //相对别名MR的起始地址偏移
+    int32_t priority;     //优先级
+    QTAILQ_HEAD(subregions, MemoryRegion) subregions;   //容器MR的子MR组成的链表头部
+    QTAILQ_ENTRY(MemoryRegion) subregions_link;  //用于将子MR组织成链表的成员
+    const char *name;  //当前MR的名称，如根节点为system
+};
+
+
+main()                              // vl.c
+    cpu_exec_init_all()             // exec.c
+        memory_map_init()           // exec.c
+            address_space_init()    // memory.c
+    machine_run_board_init()        // hw/core/machine.c
+        machine_class->init()       // pc_init1, hw/i386/pc_piix.c
+            pc_cpus_init()          // hw/i386/pc.c
+            pc_memory_init()        // hw/i386/pc.c
+                memory_region_allocate_system_memory    // numa.c
+                    allocate_system_memory_nonnuma          // numa.c
+                        memory_region_init_ram_shared_nomigrate // memory.c
+                            qemu_ram_alloc      // exec.c
+                                ram_block_add       // exec.c
+                                    phys_mem_alloc      // exec.c
+                                        qemu_anon_ram_alloc // util/oslib-win32.c
+
+
+
+struct MemoryListener {
+    void (*begin)(MemoryListener *listener);
+    void (*commit)(MemoryListener *listener);     //执行内存变更所需的函数
+    void (*region_add)(MemoryListener *listener, MemoryRegionSection *section); //在添加region的时候被调用
+    void (*region_del)(MemoryListener *listener, MemoryRegionSection *section);
+    void (*region_nop)(MemoryListener *listener, MemoryRegionSection *section);
+    void (*log_start)(MemoryListener *listener, MemoryRegionSection *section,
+                      int old, int nw);    //跟脏页机制的开启合同步有关
+    void (*log_stop)(MemoryListener *listener, MemoryRegionSection *section,
+                     int old, int nw);
+    void (*log_sync)(MemoryListener *listener, MemoryRegionSection *section);
+    void (*log_global_start)(MemoryListener *listener);
+    void (*log_global_stop)(MemoryListener *listener);
+    void (*eventfd_add)(MemoryListener *listener, MemoryRegionSection *section,
+                        bool match_data, uint64_t data, EventNotifier *e);
+    void (*eventfd_del)(MemoryListener *listener, MemoryRegionSection *section,
+                        bool match_data, uint64_t data, EventNotifier *e);
+    void (*coalesced_mmio_add)(MemoryListener *listener, MemoryRegionSection *section,
+                               hwaddr addr, hwaddr len);
+    void (*coalesced_mmio_del)(MemoryListener *listener, MemoryRegionSection *section,
+                               hwaddr addr, hwaddr len);
+    /* Lower = earlier (during add), later (during del) */
+    unsigned priority;  //表示优先级， 优先级低的在田间是会被优先调用，在删除时会最后被调用
+    AddressSpace *address_space;  //Listener对应的地址空间
+    QTAILQ_ENTRY(MemoryListener) link;
+    QTAILQ_ENTRY(MemoryListener) link_as;
+};
+
+
+
+memory_region_add_subregion
+
+struct FlatView {
+    struct rcu_head rcu;
+    unsigned ref; //引用计数，为0就销毁
+    FlatRange *ranges; //对应的flatrange数组
+    unsigned nr; //flatrange数目
+    unsigned nr_allocated;
+    struct AddressSpaceDispatch *dispatch;
+    MemoryRegion *root;
+};
+/* Range of memory in the global map.  Addresses are absolute. */
+struct FlatRange {
+    MemoryRegion *mr; //指向所属的MR
+    hwaddr offset_in_region; //在MR中的offset
+    AddrRange addr; //本FR代表的区间
+    uint8_t dirty_log_mask;
+    bool romd_mode;
+    bool readonly;
+};
+
+
+contrib/vhost-user-blk/vhost-user-blk.c -> main
+    context = g_option_context_new(NULL)
+    
+
+
+virtio_fs:
+vhost-user-fs.c -> virtio：添加 vhost-user-fs 基础设备，virtio-fs virtio 设备使用通过 virtio 承载的 FUSE 协议提供共享文件系统访问。实际文件服务器在外部 vhost-user-fs 设备后端进程中实现
+type_init(vuf_register_types)
+static const TypeInfo vuf_info = {
+    .name = TYPE_VHOST_USER_FS, -> vhost-user-fs-device
+    .parent = TYPE_VIRTIO_DEVICE, -> virtio-device
+    .instance_size = sizeof(VHostUserFS),
+    .instance_init = vuf_instance_init, -> vhost-user-fs：添加“bootindex”属性，virtio-fs 在 OVMF 下至少符合可启动设备的条件，但目前缺少必要的“bootindex”属性。添加该属性。目前仅在 PCI 设备中公开该属性。s390x (ccw) 上暂时没有对 virtiofs 的启动支持 [1] [2]，因此请保持 CCW 设备不变。仍将该属性添加到基本设备，因为这样以后将别名添加到 CCW 设备会更容易
+        device_add_bootindex_property(obj, &fs->bootindex, "bootindex", "/filesystem@0", DEVICE(obj))
+    .class_init = vuf_class_init,
+        vdc->realize = vuf_device_realize
+            len = strlen(fs->conf.tag)
+            is_power_of_2(fs->conf.queue_size)
+            vhost_user_init(&fs->vhost_user, &fs->conf.chardev, errp)
+            virtio_init(vdev, VIRTIO_ID_FS, sizeof(struct virtio_fs_config))
+            fs->hiprio_vq = virtio_add_queue(vdev, fs->conf.queue_size, vuf_handle_output)
+                vuf_handle_output
+                    NULL ?
+            ret = vhost_dev_init(&fs->vhost_dev, &fs->vhost_user, VHOST_BACKEND_TYPE_USER, 0, errp)
+};
+
+
+
 
