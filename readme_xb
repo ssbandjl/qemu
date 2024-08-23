@@ -1,3 +1,5 @@
+pfbd(pure_flash): https://blog.csdn.net/winux/article/details/140025594, https://gitee.com/cocalele/qemu/blob/v8.1.2-pfbd/block/pfbd.c#
+
 git submodule update --init
 
 xilinx
@@ -834,6 +836,16 @@ virtio_pci_device_plugged -> 在qemu中，对PCI总线添加一个设备的时�
     pci_register_bar(&proxy->pci_dev, proxy->legacy_io_bar_idx, PCI_BASE_ADDRESS_SPACE_IO, &proxy->bar)
 
 
+
+type_init(register_vfio_platform_dev_type)
+    type_register_static(&vfio_platform_dev_info)
+
+vfio_platform_class_init
+    sbc->connect_irq_notifier = vfio_start_irqfd_injection
+        kvm_irqchip_add_irqfd_notifier
+        vfio_set_trigger_eventfd
+
+
 在QEMU/KVM这一侧，开始模拟MSIx中断，具体流程大致如下：
 virtio_pci_config_write
   --> virtio_ioport_write
@@ -847,28 +859,9 @@ virtio_pci_config_write
                  --> kvm_irqchip_add_irqfd_notifier_gsi
                    --> kvm_irqchip_assign_irqfd
                   
-# 申请MSIx中断的时候，会为MSIx分配一个gsi，并为这个gsi绑定一个irqfd，然后调用ioctl KVM_IRQFD注册到内核中。               
-static int kvm_irqchip_assign_irqfd(KVMState *s, int fd, int rfd, int virq,
-                                    bool assign)
-{
-    struct kvm_irqfd irqfd = {
-        .fd = fd,
-        .gsi = virq,
-        .flags = assign ? 0 : KVM_IRQFD_FLAG_DEASSIGN,
-    };
-
-    if (rfd != -1) {
-        irqfd.flags |= KVM_IRQFD_FLAG_RESAMPLE;
-        irqfd.resamplefd = rfd;
-    }
-
-    if (!kvm_irqfds_enabled()) {
-        return -ENOSYS;
-    }
-
-    return kvm_vm_ioctl(s, KVM_IRQFD, &irqfd);
-}
-
+# 申请MSIx中断的时候，会为MSIx分配一个gsi，并为这个gsi绑定一个irqfd，然后调用ioctl KVM_IRQFD 注册到内核中。               
+static int kvm_irqchip_assign_irqfd(KVMState *s, int fd, int rfd, int virq, bool assign)
+    kvm_vm_ioctl(s, KVM_IRQFD, &irqfd);
 # KVM内核代码virt/kvm/eventfd.c
 kvm_vm_ioctl(s, KVM_IRQFD, &irqfd)
   --> kvm_irqfd_assign
@@ -990,7 +983,13 @@ virtio_blk_class_init
     vdc->load = virtio_blk_load_device;
     vdc->start_ioeventfd = virtio_blk_data_plane_start;
         k->set_guest_notifiers(qbus->parent, nvqs, true)
-        virtio_bus_set_host_notifier
+        memory_region_transaction_begin()
+        virtio_bus_set_host_notifier(VIRTIO_BUS(qbus), i, true)
+        memory_region_transaction_commit()
+        blk_set_aio_context
+        blk_in_drain
+        event_notifier_set(virtio_queue_get_host_notifier(vq))
+        virtio_queue_aio_attach_host_notifier(vq, ctx)
     vdc->stop_ioeventfd = virtio_blk_data_plane_stop;
 
 
@@ -1006,6 +1005,7 @@ static void virtio_blk_device_realize(DeviceState *dev, Error **errp)
             vdev->vq[i].handle_output = handle_output -> Qemu IO Handle CB
             vdev->vq[i].used_elems = g_new0(VirtQueueElement, queue_size)
     virtio_blk_data_plane_create(vdev, conf, &s->dataplane, &err)
+        apply_vq_mapping(conf->iothread_vq_mapping_list, s->vq_aio_context, conf->num_queues)
     s->change = qdev_add_vm_change_state_handler(dev, virtio_blk_dma_restart_cb, s)
     blk_ram_registrar_init(&s->blk_ram_registrar, s->blk)
     blk_set_dev_ops(s->blk, &virtio_block_ops, s)
@@ -1052,7 +1052,8 @@ virtio_blk IO路径/全流程
 （10）virtio_blk_handle_request 会调用 blk_aio_pwritev，通过 BlockBackend 驱动写入qcow2文件。
 （11）写入完毕之后，virtio_blk_req_complete 会调用 virtio_notify 通知虚拟机里面的驱动，数据写入完成，刚才注册的中断处理函数 vp_interrupt 会收到这个通知
 
-virtio_queue_notify 会调用VirtQueue的 handle_output 函数，前面已经设置过这个函数了，是 virtio_blk_handle_output 。接下来的调用链为：virtio_blk_handle_output->virtio_blk_handle_output_do->virtio_blk_handle_vq
+virtio_queue_notify 会调用VirtQueue的 handle_output 函数，前面已经设置过这个函数了，是 virtio_blk_handle_output
+接下来的调用链为: virtio_blk_handle_output -> virtio_blk_handle_output_do -> virtio_blk_handle_vq
     virtio_queue_set_notification -> virtio：轮询期间不启用通知，轮询期间不需要 Virtqueue 通知，因此我们禁用它们。这允许客户机驱动程序避免 MMIO vmexits。不幸的是，virtio-blk 和 virtio-scsi 处理程序函数重新启用通知，从而破坏了这种优化。修复 virtio-blk 和 virtio-scsi 模拟，使它们保持通知禁用状态。为了正确起见，要记住的关键是轮询总是在结束循环后最后一次检查，因此在轮询结束时重新启用通知时，输掉竞争是安全的。使用 null-co 块驱动程序，性能可提高 5-10%。实际存储配置将看到较小的改进，因为 MMIO vmexit 开销对延迟的影响较小
         virtio_queue_packed_set_notification(vq, enable)
             vring_packed_off_wrap_write(vq->vdev, &caches->used, off_wrap)
@@ -1504,6 +1505,12 @@ vhost_scsi_realize
             .name = "vhost",
             .begin = vhost_begin,
             .commit = vhost_commit,
+                dev->mem = g_realloc(dev->mem, regions_size)
+                cur_vmr->userspace_addr  = (uintptr_t)memory_region_get_ram_ptr(mrs->mr) + mrs->offset_within_region
+                    qemu_map_ram_ptr(mr->ram_block, offset)
+                        qemu_get_ram_block
+                        xen_map_cache
+                        ramblock_ptr
                 dev->vhost_ops->vhost_backend_no_private_memslots(dev))
                 for (i = 0; i < dev->mem->nregions; i++)
                     vhost_verify_ring_mappings(dev, (void *)(uintptr_t)dev->mem->regions[i].userspace_addr, dev->mem->regions[i].guest_phys_addr, dev->mem->regions[i].memory_size)
@@ -1743,6 +1750,8 @@ kvm_init
 
 
 
+aio_context_notifier_poll
+    return qatomic_read(&ctx->notified)
 
 
 qemu_init
@@ -1751,6 +1760,9 @@ qemu_init
     qemu_init_main_loop
         qemu_aio_context = aio_context_new(errp)
             ctx = (AioContext *) g_source_new(&aio_source_funcs, sizeof(AioContext))
+            ret = event_notifier_init(&ctx->notifier, false)
+            ctx->co_schedule_bh = aio_bh_new(ctx, co_schedule_bh_cb, ctx)
+            aio_set_event_notifier(ctx, &ctx->notifier, aio_context_notifier_cb, aio_context_notifier_poll, aio_context_notifier_poll_ready)
     ...
     qmp_x_exit_preconfig
         qemu_create_cli_devices
@@ -1808,7 +1820,14 @@ qemu_init
                                                                                 virtio_bus_set_host_notifier(VIRTIO_BUS(qbus), hdev->vq_index + i, true)
                                                                                     EventNotifier *notifier = virtio_queue_get_host_notifier(vq)
                                                                                     event_notifier_init(notifier, 1)
-                                                                                        eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC)
+                                                                                        int fds[2]
+                                                                                        ret = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC)
+                                                                                        if (ret >= 0)
+                                                                                            e->rfd = e->wfd = ret
+                                                                                        else use pip
+                                                                                            g_unix_open_pipe(fds, FD_CLOEXEC, NULL)
+                                                                                            e->rfd = fds[0]
+                                                                                            e->wfd = fds[1]
                                                                                         event_notifier_set(e) -> write(e->wfd, &value, sizeof(value)) -> write 1
                                                                                     k->ioeventfd_assign(proxy, notifier, n, true)
                                                                                     virtio_queue_set_host_notifier_enabled(vq, assign) -> vq->host_notifier_enabled = enabled
@@ -1857,6 +1876,8 @@ qemu_init
                                                                                     dev->vhost_ops->vhost_set_vring_kick(dev, &file)
                                                                                     event_notifier_test_and_clear(&vq->masked_notifier)
                                                                                     virtio_queue_vector(vdev, idx) == VIRTIO_NO_VECTOR) -> vhost：如果没有向量，则不要设置 vring 调用，我们过去常常无条件地设置 vring 调用 fd，即使客户驱动程序根本不使用 MSIX 来处理此 vritqueue。这将导致大量不必要的用户空间访问，并且驱动程序的其他检查根本不使用中断（例如 virtio-net pmd）。因此，如果客户根本不使用此 virtqueue 的任何向量，请检查并清理 vring 调用 fd。Perf diffs（在 rx 上）显示，在 vhost_signal() 上浪费的大量 CPU 被节省了
+                                                                                vhost_start_config_intr
+                                                                                    event_notifier_set
                                                         vhost_dev_get_config
                                                      qemu_chr_fe_set_handlers(&s->chardev,  NULL, NULL, vhost_user_blk_event, NULL, (void *)dev, NULL, true) -> add the handler
 
@@ -2225,7 +2246,6 @@ virtio_pci_device_plugged
             .read = virtio_pci_notify_read,
             .write = virtio_pci_notify_write_pio,
         };
-        memory_region_init_io
         memory_region_init_io(&proxy->notify.mr, OBJECT(proxy), &notify_ops, proxy,name->str,proxy->notify.size)
             memory_region_init(mr, owner, name, size)
             mr->ops = ops ? ops : &unassigned_mem_ops
@@ -2261,8 +2281,14 @@ static void virtio_pci_bus_class_init(ObjectClass *klass, void *data)
         virtio_pci_set_guest_notifier(d, n, assign, with_irqfd)
             notifier = virtio_config_get_guest_notifier(vdev)
             or notifier = virtio_queue_get_guest_notifier(vq)
+                return &vq->guest_notifier
             virtio_pci_set_guest_notifier_fd_handler(vdev, vq, n, true, with_irqfd)
                 event_notifier_set_handler(&vq->guest_notifier, virtio_queue_guest_notifier_read)
+                    event_notifier_set_handler
+                        new_node->io_read = io_read
+                    virtio_queue_guest_notifier_read
+                    event_notifier_test_and_clear(n)
+                        read(e->rfd, buffer, sizeof(buffer)
                     virtio_irq(vq)
         virtio_pci_set_guest_notifier(d, VIRTIO_CONFIG_IRQ_IDX, assign, with_irqfd)
         proxy->vector_irqfd = g_malloc0(sizeof(*proxy->vector_irqfd) * msix_nr_vectors_allocated(&proxy->pci_dev))
@@ -2441,10 +2467,56 @@ vfio_pci_dev_class_init
     pdc->config_read = vfio_pci_read_config;
     pdc->config_write = vfio_pci_write_config
         pwrite(vdev->vbasedev.fd, &val_le, len, vdev->config_offset + addr)
-        msi_enabled
-        vfio_msi_enable
+        if (pdev->cap_present & QEMU_PCI_CAP_MSI &&
+            msi_enabled
+            pci_default_write_config(pdev, addr, val, len)
+            vfio_msi_enable
+                vdev->nr_vectors = msi_nr_vectors_allocated(&vdev->pdev)
+                qemu_set_fd_handler(event_notifier_get_fd(&vector->interrupt), vfio_msi_interrupt, NULL, vector)
+                    vfio_msi_interrupt
+                        event_notifier_test_and_clear(&vector->interrupt)
+                        get_msg = msix_get_message
+                        notify = msix_notify
+                        memory_region_set_enabled(&vdev->pdev.msix_pba_mmio, true)
+                        msg = get_msg(&vdev->pdev, nr)
+                        notify(&vdev->pdev, nr)
+                vfio_add_kvm_msi_virq(vdev, vector, i, false)
+                    vector->virq = kvm_irqchip_add_msi_route(&vfio_route_change, vector_n, &vdev->pdev)
+                        msg = pci_get_msi_message(dev, vector)
+                        virq = kvm_irqchip_get_virq(s)
+                        kvm_arch_msi_data_to_gsi
+                        kroute.type = KVM_IRQ_ROUTING_MSI
+                        kvm_add_routing_entry(s, &kroute)
+                        kvm_arch_add_msi_route_post(&kroute, vector, dev)
+                vfio_commit_kvm_msi_virq_batch
+                vfio_enable_vectors -> 构造irq_set,包含了设备的irq数量，irq类型，irq对应的eventfd的fd集合等
+                    struct vfio_irq_set *irq_set
+                    fd = event_notifier_get_fd(&vdev->msi_vectors[i].interrupt)
+                    or fd = event_notifier_get_fd(&vdev->msi_vectors[i].kvm_interrupt)
+                    ioctl(vdev->vbasedev.fd, VFIO_DEVICE_SET_IRQS, irq_set)
+                vfio_update_msi
+                    vfio_update_kvm_msi_virq
+                        kvm_irqchip_update_msi_route
+                        kvm_irqchip_commit_routes
+                            kvm_vm_ioctl(s, KVM_SET_GSI_ROUTING, s->irq_routes)
         or msix_enabled
-        vfio_sub_page_bar_update_mapping(pdev, bar)
+            vfio_msix_enable -> 在Guest写 MSI-X Capability Structure 的 Enable Bit 时触发
+                vfio_prepare_kvm_msi_virq_batch
+                msix_set_vector_notifiers(&vdev->pdev, vfio_msix_vector_use, vfio_msix_vector_release, NULL)
+                    vfio_msix_vector_do_use(pdev, nr, &msg, vfio_msi_interrupt)
+                        vfio_update_kvm_msi_virq
+                        vfio_add_kvm_msi_virq(vdev, vector, nr, true)
+                        vfio_connect_kvm_msi_virq
+                        vfio_set_irq_signaling
+                            ioctl(vbasedev->fd, VFIO_DEVICE_SET_IRQS, irq_set)
+                        memory_region_set_enabled(&vdev->pdev.msix_pba_mmio, false)
+                vfio_commit_kvm_msi_virq_batch
+                vfio_enable_vectors
+                else vfio_enable_msix_no_vec
+        else
+            vfio_sub_page_bar_update_mapping(pdev, bar)
+        else
+            pci_default_write_config(pdev, addr, val, len)
 
 
 static const MemoryRegionOps vfio_nvidia_mirror_quirk = {
@@ -2457,6 +2529,12 @@ static const MemoryRegionOps vfio_nvidia_mirror_quirk = {
 
 
 
+Guest配置MSIX Table：
+=> 由于MMIO Exit而退到QEMU
+=> address_space_rw
+   => address_space_write
+      => flatview_write
+         ...（一系列的调用）
 
 const MemoryRegionOps vfio_region_ops = {
     .read = vfio_region_read,
@@ -4045,3 +4123,135 @@ virtio_device_start_ioeventfd_impl
         event_notifier_set_handler(&vq->host_notifier,
                                    virtio_queue_host_notifier_read);	/* 注册rfd读回调 */
     }
+
+
+
+
+(gdb) bt
+#0  virtio_queue_guest_notifier_read (n=0x55555602db64 <event_notifier_set_handler+59>) at ../hw/virtio/virtio.c:3478
+#1  0x0000555555d74f67 in virtio_queue_set_guest_notifier_fd_handler (vq=0x5555580ba490, assign=false, with_irqfd=false) at ../hw/virtio/virtio.c:3504
+#2  0x0000555555b1f812 in virtio_pci_set_guest_notifier_fd_handler (vdev=0x5555580b7130, vq=0x5555580ba490, n=0, assign=false, with_irqfd=false) at ../hw/virtio/virtio-pci.c:1175
+#3  0x0000555555b1f91b in virtio_pci_set_guest_notifier (d=0x5555580aed60, n=0, assign=false, with_irqfd=false) at ../hw/virtio/virtio-pci.c:1202
+#4  0x0000555555b1fb83 in virtio_pci_set_guest_notifiers (d=0x5555580aed60, nvqs=1, assign=false) at ../hw/virtio/virtio-pci.c:1263
+#5  0x0000555555d1968a in vhost_user_blk_stop (vdev=0x5555580b7130) at ../hw/block/vhost-user-blk.c:217
+#6  0x0000555555d197a1 in vhost_user_blk_set_status (vdev=0x5555580b7130, status=0 '\000') at ../hw/block/vhost-user-blk.c:248
+#7  0x0000555555d7128f in virtio_set_status (vdev=0x5555580b7130, val=0 '\000') at ../hw/virtio/virtio.c:2048
+#8  0x0000555555b207bc in virtio_pci_common_write (opaque=0x5555580aed60, addr=20, val=0, size=1) at ../hw/virtio/virtio-pci.c:1580
+#9  0x0000555555da02c4 in memory_region_write_accessor (mr=0x5555580af8a0, addr=20, value=0x7ffff486f608, size=1, shift=0, mask=255, attrs=...) at ../system/memory.c:497
+#10 0x0000555555da05db in access_with_adjusted_size (addr=20, value=0x7ffff486f608, size=1, access_size_min=1, access_size_max=4, access_fn=0x555555da01ca <memory_region_write_accessor>, mr=0x5555580af8a0, attrs=...)
+    at ../system/memory.c:573
+#11 0x0000555555da3717 in memory_region_dispatch_write (mr=0x5555580af8a0, addr=20, data=0, op=MO_8, attrs=...) at ../system/memory.c:1521
+#12 0x0000555555db0fea in flatview_write_continue (fv=0x7fffec65aca0, addr=4261412884, attrs=..., ptr=0x7ffff7fc6028, len=1, addr1=20, l=1, mr=0x5555580af8a0) at ../system/physmem.c:2714
+#13 0x0000555555db1151 in flatview_write (fv=0x7fffec65aca0, addr=4261412884, attrs=..., buf=0x7ffff7fc6028, len=1) at ../system/physmem.c:2756
+#14 0x0000555555db1511 in address_space_write (as=0x555556fd5080 <address_space_memory>, addr=4261412884, attrs=..., buf=0x7ffff7fc6028, len=1) at ../system/physmem.c:2863
+#15 0x0000555555db1582 in address_space_rw (as=0x555556fd5080 <address_space_memory>, addr=4261412884, attrs=..., buf=0x7ffff7fc6028, len=1, is_write=true) at ../system/physmem.c:2873
+#16 0x0000555555e052ae in kvm_cpu_exec (cpu=0x55555737c530) at ../accel/kvm/kvm-all.c:2902
+#17 0x0000555555e08100 in kvm_vcpu_thread_fn (arg=0x55555737c530) at ../accel/kvm/kvm-accel-ops.c:50
+#18 0x0000555556013649 in qemu_thread_start (args=0x555557386660) at ../util/qemu-thread-posix.c:541
+#19 0x00007ffff7647609 in start_thread (arg=<optimized out>) at pthread_create.c:477
+#20 0x00007ffff7533353 in clone () at ../sysdeps/unix/sysv/linux/x86_64/clone.S:95
+
+
+
+
+中断:
+intx 加速，传统 PCI 引脚中断是基于级别的，因此，除了 irq 文件描述符之外，还需要向仿真程序发送重新采样文件描述符。此第二个文件描述符允许在客户机确认中断时通知共享 irq 的多个设备，因此如果其设备尚未取消其中断，它们可以重新触发中断。 intx irq 描述符 irq 描述符由代理对象使用 event_notifier_init() 创建 irq 和重新采样事件，并使用 kvm_vm_ioctl(KVM_IRQFD) 将它们绑定到中断来创建。可以使用 pci_device_route_intx_to_irq() 找到中断路由。 intx 路由更改 当客户机对设备引脚所连接的 APIC 进行编程时，可以更改 Intx 路由。 QEMU 中的代理对象将使用 pci_device_set_intx_routing_notifier() 来获知客户对路由的任何更改。此处理程序将大致遵循 VFIO 中断逻辑来更改路由：从其路由中取消分配现有的 irq 描述符，然后为其分配新路由。（参见 vfio_intx_update()）MSI/X 加速 MSI/X 中断作为 DMA 事务发送到主机。中断数据包含由客户编程的向量，一个设备可能有多个与之关联的 MSI 中断，因此可能需要将多个 irq 描述符发送到仿真程序。MSI/X irq 描述符这种情况也将遵循 VFIO 示例。对于每个 MSI/X 中断，都会创建一个 eventfd，由 kvm_irqchip_add_msi_route() 分配一个虚拟中断，并使用 kvm_irqchip_add_irqfd_notifier() 将虚拟中断绑定到 eventfd。MSI/X 配置空间更改客户机可能会动态更新设备 PCI 配置空间中的几个 MSI 相关表。这些包括每个 MSI 中断启用和矢量数据。此外，MSIX 表存在于设备内存空间中，而不是配置空间中。与上面的 BAR 情况非常相似，代理对象必须查看客户机配置空间编程，以保持 QEMU 和仿真程序之间的 MSI 中断状态一致
+
+
+
+irq:
+NDST: 
+
+
+
+memory_region_init_io(&s->pchip.reg_conf, OBJECT(s), &alpha_pci_conf1_ops, b, "pci0-conf", 16 * MiB)
+alpha_pci_conf1_ops
+bw_conf1_write
+    pci_data_write
+        pci_host_config_write_common
+            pci_dev->config_write(pci_dev, addr, val, MIN(len, limit - addr))
+
+
+
+irq:
+os_host_main_loop_wait
+    glib_pollfds_fill(&timeout)
+    ret = qemu_poll_ns((GPollFD *)gpollfds->data, gpollfds->len, timeout)
+        ppoll((struct pollfd *)fds, nfds, NULL, NULL)
+        or g_poll(fds, nfds, qemu_timeout_ns_to_ms(timeout))
+            poll(fds, nfds, timeout)
+    glib_pollfds_poll
+        g_main_context_dispatch(context) -> aio_ctx_dispatch -> aio_dispatch(ctx) -> aio_dispatch_handlers
+            QLIST_FOREACH_SAFE_RCU(node, &ctx->aio_handlers, node, tmp)
+                progress = aio_dispatch_handler(ctx, node) || progress
+                    node->io_read(node->opaque) -> virtio_queue_guest_notifier_read
+    g_main_context_release(context)
+
+
+
+nfds = pollfds_fill(gpollfds, &rfds, &wfds, &xfds)
+select_ret = select(nfds + 1, &rfds, &wfds, &xfds, &tv0)
+g_poll_ret = qemu_poll_ns(poll_fds, n_poll_fds + w->num, poll_timeout_ns)
+
+
+blk:
+typedef struct BlockDriver BlockDriver;
+
+qemu/build//qemu-system-x86_64  -enable-kvm -cpu host -smp 1 -drive if=ide,file=./centos8.qcow2,cache=none \
+        -drive if=virtio,file=pfbd:test_v1,cache=none \
+        -m 4G -vnc :12 \
+        -nic user,hostfwd=tcp::5555-:22
+block/pfbd.c
+static BlockDriver bdrv_pfbd = {
+		.format_name            = "pfbd",
+		.instance_size          = sizeof(BDRVPfbdState),
+		.bdrv_parse_filename    = qemu_pfbd_parse_filename,
+		.bdrv_refresh_limits    = qemu_pfbd_refresh_limits,
+		.bdrv_file_open         = qemu_pfbd_open,
+            s->vol = pf_open_volume(volume_name, s->conf_path, NULL, S5_LIB_VER)
+            s->image_size = pf_get_volume_size(s->vol)
+		.bdrv_close             = qemu_pfbd_close,
+		.bdrv_reopen_prepare    = qemu_pfbd_reopen_prepare,
+		.bdrv_has_zero_init     = bdrv_has_zero_init_1,
+		//.bdrv_get_info          = qemu_pfbd_getinfo,
+        .bdrv_co_get_info       = qemu_pfbd_co_getinfo,
+        //.bdrv_co_create_opts    = qemu_pfbd_co_create_opts,
+		.create_opts            = &qemu_pfbd_create_opts,
+		.bdrv_co_getlength         = qemu_pfbd_co_getlength,
+		.protocol_name          = "pfbd",
+#ifndef USE_COROUTINE
+		.bdrv_aio_preadv        = qemu_pfbd_aio_preadv,
+		.bdrv_aio_pwritev       = qemu_pfbd_aio_pwritev,
+#else
+        .bdrv_co_preadv = pfbd_co_preadv,
+        .bdrv_co_pwritev = pfbd_co_pwritev,
+            pf_iov_submit(s->vol, qiov->iov, qiov->niov, bytes, offset, pfbd_rw_cb, &data, 1)
+                pfbd_rw_cb
+                    aio_bh_schedule_oneshot(bdrv_get_aio_context(data->bds), pfbd_rw_cb_bh, data)
+                        qemu_coroutine_enter(data->co) -> waikup co -> 唤醒处于等待中的IO 协程
+        //.bdrv_detach_aio_context = pfbd_detach_aio_context,
+        //.bdrv_attach_aio_context = pfbd_attach_aio_context,
+        //.bdrv_io_plug = pfbd_aio_plug,
+        //.bdrv_io_unplug = pfbd_aio_unplug,
+
+#endif
+
+//#ifdef LIBRBD_SUPPORTS_AIO_FLUSH
+//		.bdrv_aio_flush         = qemu_pfbd_aio_flush,
+//#else
+//		.bdrv_co_flush_to_disk  = qemu_pfbd_co_flush,
+//#endif
+
+
+//		.bdrv_aio_pdiscard      = qemu_pfbd_aio_pdiscard,
+
+
+
+//#ifdef LIBRBD_SUPPORTS_INVALIDATE
+//		.bdrv_co_invalidate_cache = qemu_pfbd_co_invalidate_cache,
+//#endif
+
+		.strong_runtime_opts    = qemu_pfbd_strong_runtime_opts,
+};
+
+
